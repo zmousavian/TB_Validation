@@ -1,0 +1,5263 @@
+---
+title: "New Olink Study"
+author: "Zaynab Mousavian"
+date: "15 August 2024"
+output:
+  html_document: default
+  pdf_document: default
+subtitle: Multiple ROC plots:4 markers
+---
+
+```{r setup, include=FALSE}
+# Set global options for all chunks
+knitr::opts_chunk$set(
+  message = FALSE,
+  warning = FALSE
+)
+```
+
+# Load R packages
+
+```{r message=FALSE, warning=FALSE}
+library(dplyr)
+library(ggplot2)
+library(multiview)
+library(tidyr)
+library(tidyverse)
+library(caret)
+library(pROC)
+library(patchwork)
+```
+
+# Function for visualization ROC plot with Youden index
+
+```{r}
+ROCdata_func <- function(rocObj, marker_name = NULL){
+  
+  # Create a data frame to hold the ROC curve data
+  roc_data <- data.frame(
+    specificity = rev(rocObj$specificities),
+    sensitivity = rev(rocObj$sensitivities),
+    model = marker_name
+  )
+  return(roc_data)
+}
+```
+
+# Function for visualization ROC plot with Youden index
+
+```{r}
+ROCplot_func <- function(roc_data, spec,sens,model,title){
+  plot<- ggplot(data=roc_data, aes(x = 1 - .data[[spec]], y = .data[[sens]],color =.data[[model]])) +
+    geom_line(size = 1)+ 
+    scale_color_manual(values = c("#E41A1C", "#377EB8", "#4DAF4A", "#F781BF", "#FF7F00", 
+            "#E7298A", "#A6761D", "#666666", "#00BFC4", "#CC79A7", 
+            "#F0E442", "#8C564B", "#1F77B4", "#FFD700", "#40E0D0"))+
+    geom_abline(slope=1, intercept = 0, linetype = "dashed", alpha=0.7, color = "grey") +
+    coord_equal() + 
+  labs(title = title,
+       x = "1 - Specificity",
+       y = "Sensitivity",
+       linetype=" ") +
+    theme(axis.text.x = element_text(size = 12),  # Increase size of x-axis text
+          axis.text.y = element_text(size = 12),
+          axis.title.y = element_text(size=12),
+          plot.title = element_text(size=9),
+          panel.background = element_rect(fill = "white", color = NA),  
+          plot.background = element_rect(fill = "white", color = NA), 
+          panel.grid.major = element_blank(),  
+          panel.grid.minor = element_blank(),
+          panel.border = element_rect(color ="grey", fill = NA))
+  
+  return(plot)
+}
+```
+
+# Definition of all 4 combinations out of 6
+
+```{r}
+moduleGenes=c("IL6","CDCP1","IFN-gamma","CXCL9","VEGFA","MCP-3")
+combinations <- combn(moduleGenes, 4)
+combined_strings <- apply(combinations, 2, paste, collapse = "+")
+```
+
+# Which data?{.tabset}
+
+## 1
+
+### Markers of signature
+
+```{r}
+combined_strings[1]
+```
+
+### Load data 
+
+```{r message=FALSE, warning=FALSE}
+l=load("../Data/ReadyData/AllDatasets-Samples.RData")
+l=load("../Data/ReadyData/ReadyData-discovery.RData")
+dat_Expr <- olink %>%as.data.frame()
+groups <- samples_first[match(row.names(dat_Expr),samples_first$SampleID),"modifiedType",drop=TRUE]
+
+moduleGenes=combinations[,1]
+
+first_dataset <- dat_Expr%>%as.data.frame()
+first_dataset <- first_dataset%>%
+  select(moduleGenes)%>%
+  mutate(Class=groups)
+```
+
+### Which experiment {.tabset} 
+
+#### Active vs Latent
+
+##### Make train data  
+
+```{r}
+first_dataset_filtered <- first_dataset%>%
+  filter(Class%in%c("Active","Latent"))
+
+first_dataset_filtered$Class <- factor(first_dataset_filtered$Class, levels = c("Active","Latent"))
+data <- first_dataset_filtered
+```
+
+##### Build SVM model
+
+```{r}
+set.seed(123)
+#Defining SVM model
+lpSVM <- list(type = "Classification",
+              library = "kernlab",
+              loop = NULL)
+prm <- data.frame(parameter = c("C", "sigma"),
+                  class = rep("numeric", 2),
+                  label = c("Cost", "Sigma"))
+lpSVM$parameters <- prm
+svmGrid <- function(x, y, len = NULL, search = "grid") {
+  library(kernlab)
+  ## This produces low, middle and high values for sigma 
+  ## (i.e. a vector with 3 elements). 
+  sigmas <- kernlab::sigest(as.matrix(x), na.action = na.omit, scaled = TRUE)  
+  ## To use grid search:
+  if(search == "grid") {
+    out <- expand.grid(sigma = mean(as.vector(sigmas[-2])),
+                       C = 2 ^((1:len) - 3))
+  } else {
+    ## For random search, define ranges for the parameters then
+    ## generate random values for them
+    rng <- extendrange(log(sigmas), f = .75)
+    out <- data.frame(sigma = exp(runif(len, min = rng[1], max = rng[2])),
+                      C = 2^runif(len, min = -5, max = 8))
+  }
+  out
+}
+lpSVM$grid <- svmGrid
+svmFit <- function(x, y, wts, param, lev, last, weights, classProbs, ...) { 
+  kernlab::ksvm(
+    x = as.matrix(x), y = y,
+    kernel = "rbfdot",
+    kpar = list(sigma = param$sigma),
+    C = param$C,
+    prob.model = classProbs,
+    ...
+  )
+}
+
+lpSVM$fit <- svmFit
+svmPred <- function(modelFit, newdata, preProc = NULL, submodels = NULL)
+  kernlab::predict(modelFit, newdata)
+lpSVM$predict <- svmPred
+svmProb <- function(modelFit, newdata, preProc = NULL, submodels = NULL)
+  kernlab::predict(modelFit, newdata, type = "probabilities")
+lpSVM$prob <- svmProb
+svmSort <- function(x) x[order(x$C),]
+lpSVM$sort <- svmSort
+lpSVM$levels <- function(x) kernlab::lev(x)
+```
+
+##### Train SVM model
+
+```{r}
+set.seed(123)
+fitControl <- trainControl(method = "repeatedcv",
+                             ## 10-fold CV...
+                             number = 10,
+                             ## repeated ten times
+                             repeats = 10,
+                             classProbs = TRUE,
+                             summaryFunction = twoClassSummary)
+  
+set.seed(123)
+svmTune <- train(Class ~ ., data = data, 
+                   method = lpSVM, 
+                   preProc = c("center", "scale"),
+                   metric="ROC",
+                   tuneLength = 8,
+                   trControl = fitControl)
+```
+
+##### prediction
+
+```{r}
+pred <- predict(svmTune, data)
+prob <- predict(svmTune, data, type="prob")
+```
+
+##### Confusion matrix
+
+```{r}
+confusionMatrix(pred,data$Class)
+```
+
+##### ROC curve
+
+```{r}
+roc0 <- roc(response = data$Class, 
+              predictor = predict(svmTune, data, type = "prob")[,1], 
+              levels = rev(levels(data$Class)),ci=TRUE)
+
+ciobj <- ci.se(roc0, specificities=seq(0, 1, l=25))
+dat.ci <- data.frame(x = as.numeric(rownames(ciobj)),
+                     lower = ciobj[, 1],
+                     upper = ciobj[, 3])
+
+ROC_discovery_1 <- ROCdata_func(roc0,combined_strings[1])
+
+ROC_discovery_1
+```
+
+##### Test SVM 
+
+###### Which data? {.tabset}
+
+####### sweden
+
+######## load data
+
+```{r}
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-third-heparin.RData")
+dat_Expr_third_heparin <- t(olink)
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-second-sweden.RData")
+dat_Expr_second_sweden <- t(olink)
+
+groups_third_heparin <- samples_third[match(colnames(dat_Expr_third_heparin),samples_third$SampleID),"modifiedType",drop=TRUE]
+groups_second_sweden <- samples_second[match(colnames(dat_Expr_second_sweden),samples_second$SampleID),"modifiedType",drop=TRUE]
+
+dat_Expr <- dat_Expr_third_heparin%>%
+  cbind(dat_Expr_second_sweden)
+groups <- c(groups_third_heparin,groups_second_sweden)
+```
+
+######## make test dataset
+
+```{r}
+sweden_dataset <- t(dat_Expr)%>%as.data.frame()
+sweden_dataset <- sweden_dataset%>%
+  select(moduleGenes)%>%
+  mutate(Class=groups)
+
+sweden_dataset <- sweden_dataset%>%
+  filter(Class%in%c("Active","Latent"))
+  
+sweden_dataset$Class <- factor(sweden_dataset$Class, levels = c("Active","Latent"))
+data_test <- sweden_dataset
+```
+
+######## prediction
+
+```{r}
+pred <- predict(svmTune, data_test)
+prob <- predict(svmTune, data_test, type="prob")
+```
+
+######## Confusion matrix
+
+```{r}
+confusionMatrix(pred,data_test$Class)
+```
+
+######## ROC curve
+
+```{r}
+roc0 <- roc(response = data_test$Class, 
+              predictor = predict(svmTune, data_test, type = "prob")[,1], 
+              levels = rev(levels(data_test$Class)),ci=TRUE)
+
+ciobj <- ci.se(roc0, specificities=seq(0, 1, l=25))
+dat.ci <- data.frame(x = as.numeric(rownames(ciobj)),
+                     lower = ciobj[, 1],
+                     upper = ciobj[, 3])
+
+ROC_sweden_1 <- ROCdata_func(roc0,combined_strings[1])
+
+ROC_sweden_1
+```
+
+
+
+####### italy 
+
+######## load data
+
+```{r}
+l=load("../Data/ReadyData/ReadyData-second-italy.RData")
+dat_Expr <- t(olink)
+groups <- samples_second[match(colnames(dat_Expr),samples_second$SampleID),"modifiedType",drop=TRUE]
+```
+
+######## make test dataset
+
+```{r}
+second_italy_dataset <- t(dat_Expr)%>%as.data.frame()
+second_italy_dataset <- second_italy_dataset%>%
+  select(moduleGenes)%>%
+  mutate(Class=groups)
+
+second_italy_dataset <- second_italy_dataset%>%
+  filter(Class%in%c("Active","Latent"))
+  
+second_italy_dataset$Class <- factor(second_italy_dataset$Class, levels = c("Active","Latent"))
+data_test <- second_italy_dataset
+```
+
+######## prediction
+
+```{r}
+pred <- predict(svmTune, data_test)
+prob <- predict(svmTune, data_test, type="prob")
+```
+
+######## Confusion matrix
+
+```{r}
+confusionMatrix(pred,data_test$Class)
+```
+
+######## ROC curve
+
+```{r}
+roc0 <- roc(response = data_test$Class, 
+              predictor = predict(svmTune, data_test, type = "prob")[,1], 
+              levels = rev(levels(data_test$Class)),ci=TRUE)
+
+ciobj <- ci.se(roc0, specificities=seq(0, 1, l=25))
+dat.ci <- data.frame(x = as.numeric(rownames(ciobj)),
+                     lower = ciobj[, 1],
+                     upper = ciobj[, 3])
+
+ROC_italy_1 <- ROCdata_func(roc0,combined_strings[1])
+
+ROC_italy_1
+```
+
+####### both
+######## load data
+
+```{r}
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-third-heparin.RData")
+dat_Expr_third_heparin <- t(olink)
+# dat_Expr_third_heparin <- dat_Expr_third_heparin[,!colnames(dat_Expr_third_heparin)%in%c("TB0166.0","TB0102","TB0161")]
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-second-sweden.RData")
+dat_Expr_second_sweden <- t(olink)
+# dat_Expr_second_sweden <- dat_Expr_second_sweden[,!colnames(dat_Expr_second_sweden)%in%c("TB0061")]
+
+groups_third_heparin <- samples_third[match(colnames(dat_Expr_third_heparin),samples_third$SampleID),"modifiedType",drop=TRUE]
+groups_second_sweden <- samples_second[match(colnames(dat_Expr_second_sweden),samples_second$SampleID),"modifiedType",drop=TRUE]
+
+dat_Expr <- dat_Expr_third_heparin%>%
+  cbind(dat_Expr_second_sweden)
+groups <- c(groups_third_heparin,groups_second_sweden)
+
+sweden_dataset <- t(dat_Expr)%>%as.data.frame()
+sweden_dataset <- sweden_dataset%>%
+  select(moduleGenes)%>%
+  mutate(Class=groups)
+
+l=load("../Data/ReadyData/ReadyData-second-italy.RData")
+dat_Expr <- t(olink)
+groups <- samples_second[match(colnames(dat_Expr),samples_second$SampleID),"modifiedType",drop=TRUE]
+
+second_italy_dataset <- t(dat_Expr)%>%as.data.frame()
+second_italy_dataset <- second_italy_dataset%>%
+  select(moduleGenes)%>%
+  mutate(Class=groups)
+```
+
+######## make test dataset 
+
+```{r}
+data_test_both <- sweden_dataset%>%
+  rbind(second_italy_dataset)
+
+data_test_both <- data_test_both%>%
+  filter(Class%in%c("Active","Latent"))
+  
+data_test_both$Class <- factor(data_test_both$Class, levels = c("Active","Latent"))
+data_test <- data_test_both
+```
+
+######## prediction
+
+```{r}
+pred <- predict(svmTune, data_test)
+prob <- predict(svmTune, data_test, type="prob")
+```
+
+######## Confusion matrix
+
+```{r}
+confusionMatrix(pred,data_test$Class)
+```
+
+######## ROC curve
+
+```{r}
+roc0 <- roc(response = data_test$Class, 
+              predictor = predict(svmTune, data_test, type = "prob")[,1], 
+              levels = rev(levels(data_test$Class)),ci=TRUE)
+
+ciobj <- ci.se(roc0, specificities=seq(0, 1, l=25))
+dat.ci <- data.frame(x = as.numeric(rownames(ciobj)),
+                     lower = ciobj[, 1],
+                     upper = ciobj[, 3])
+
+ROC_both_1 <- ROCdata_func(roc0,combined_strings[1])
+
+ROC_both_1
+```
+
+
+## 2
+
+### Markers of signature
+
+```{r}
+combined_strings[2]
+```
+
+### Load data 
+
+```{r message=FALSE, warning=FALSE}
+l=load("../Data/ReadyData/AllDatasets-Samples.RData")
+l=load("../Data/ReadyData/ReadyData-discovery.RData")
+dat_Expr <- olink %>%as.data.frame()
+groups <- samples_first[match(row.names(dat_Expr),samples_first$SampleID),"modifiedType",drop=TRUE]
+
+moduleGenes=combinations[,2]
+
+first_dataset <- dat_Expr%>%as.data.frame()
+first_dataset <- first_dataset%>%
+  select(moduleGenes)%>%
+  mutate(Class=groups)
+```
+
+### Which experiment {.tabset} 
+
+#### Active vs Latent
+
+##### Make train data  
+
+```{r}
+first_dataset_filtered <- first_dataset%>%
+  filter(Class%in%c("Active","Latent"))
+
+first_dataset_filtered$Class <- factor(first_dataset_filtered$Class, levels = c("Active","Latent"))
+data <- first_dataset_filtered
+```
+
+##### Build SVM model
+
+```{r}
+set.seed(123)
+#Defining SVM model
+lpSVM <- list(type = "Classification",
+              library = "kernlab",
+              loop = NULL)
+prm <- data.frame(parameter = c("C", "sigma"),
+                  class = rep("numeric", 2),
+                  label = c("Cost", "Sigma"))
+lpSVM$parameters <- prm
+svmGrid <- function(x, y, len = NULL, search = "grid") {
+  library(kernlab)
+  ## This produces low, middle and high values for sigma 
+  ## (i.e. a vector with 3 elements). 
+  sigmas <- kernlab::sigest(as.matrix(x), na.action = na.omit, scaled = TRUE)  
+  ## To use grid search:
+  if(search == "grid") {
+    out <- expand.grid(sigma = mean(as.vector(sigmas[-2])),
+                       C = 2 ^((1:len) - 3))
+  } else {
+    ## For random search, define ranges for the parameters then
+    ## generate random values for them
+    rng <- extendrange(log(sigmas), f = .75)
+    out <- data.frame(sigma = exp(runif(len, min = rng[1], max = rng[2])),
+                      C = 2^runif(len, min = -5, max = 8))
+  }
+  out
+}
+lpSVM$grid <- svmGrid
+svmFit <- function(x, y, wts, param, lev, last, weights, classProbs, ...) { 
+  kernlab::ksvm(
+    x = as.matrix(x), y = y,
+    kernel = "rbfdot",
+    kpar = list(sigma = param$sigma),
+    C = param$C,
+    prob.model = classProbs,
+    ...
+  )
+}
+
+lpSVM$fit <- svmFit
+svmPred <- function(modelFit, newdata, preProc = NULL, submodels = NULL)
+  kernlab::predict(modelFit, newdata)
+lpSVM$predict <- svmPred
+svmProb <- function(modelFit, newdata, preProc = NULL, submodels = NULL)
+  kernlab::predict(modelFit, newdata, type = "probabilities")
+lpSVM$prob <- svmProb
+svmSort <- function(x) x[order(x$C),]
+lpSVM$sort <- svmSort
+lpSVM$levels <- function(x) kernlab::lev(x)
+```
+
+##### Train SVM model
+
+```{r}
+set.seed(123)
+fitControl <- trainControl(method = "repeatedcv",
+                             ## 10-fold CV...
+                             number = 10,
+                             ## repeated ten times
+                             repeats = 10,
+                             classProbs = TRUE,
+                             summaryFunction = twoClassSummary)
+  
+set.seed(123)
+svmTune <- train(Class ~ ., data = data, 
+                   method = lpSVM, 
+                   preProc = c("center", "scale"),
+                   metric="ROC",
+                   tuneLength = 8,
+                   trControl = fitControl)
+```
+
+##### prediction
+
+```{r}
+pred <- predict(svmTune, data)
+prob <- predict(svmTune, data, type="prob")
+```
+
+##### Confusion matrix
+
+```{r}
+confusionMatrix(pred,data$Class)
+```
+
+##### ROC curve
+
+```{r}
+roc0 <- roc(response = data$Class, 
+              predictor = predict(svmTune, data, type = "prob")[,1], 
+              levels = rev(levels(data$Class)),ci=TRUE)
+
+ciobj <- ci.se(roc0, specificities=seq(0, 1, l=25))
+dat.ci <- data.frame(x = as.numeric(rownames(ciobj)),
+                     lower = ciobj[, 1],
+                     upper = ciobj[, 3])
+
+ROC_discovery_2 <- ROCdata_func(roc0,combined_strings[2])
+
+ROC_discovery_2
+```
+
+##### Test SVM 
+
+###### Which data? {.tabset}
+
+####### sweden
+
+######## load data
+
+```{r}
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-third-heparin.RData")
+dat_Expr_third_heparin <- t(olink)
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-second-sweden.RData")
+dat_Expr_second_sweden <- t(olink)
+
+groups_third_heparin <- samples_third[match(colnames(dat_Expr_third_heparin),samples_third$SampleID),"modifiedType",drop=TRUE]
+groups_second_sweden <- samples_second[match(colnames(dat_Expr_second_sweden),samples_second$SampleID),"modifiedType",drop=TRUE]
+
+dat_Expr <- dat_Expr_third_heparin%>%
+  cbind(dat_Expr_second_sweden)
+groups <- c(groups_third_heparin,groups_second_sweden)
+```
+
+######## make test dataset
+
+```{r}
+sweden_dataset <- t(dat_Expr)%>%as.data.frame()
+sweden_dataset <- sweden_dataset%>%
+  select(moduleGenes)%>%
+  mutate(Class=groups)
+
+sweden_dataset <- sweden_dataset%>%
+  filter(Class%in%c("Active","Latent"))
+  
+sweden_dataset$Class <- factor(sweden_dataset$Class, levels = c("Active","Latent"))
+data_test <- sweden_dataset
+```
+
+######## prediction
+
+```{r}
+pred <- predict(svmTune, data_test)
+prob <- predict(svmTune, data_test, type="prob")
+```
+
+######## Confusion matrix
+
+```{r}
+confusionMatrix(pred,data_test$Class)
+```
+
+######## ROC curve
+
+```{r}
+roc0 <- roc(response = data_test$Class, 
+              predictor = predict(svmTune, data_test, type = "prob")[,1], 
+              levels = rev(levels(data_test$Class)),ci=TRUE)
+
+ciobj <- ci.se(roc0, specificities=seq(0, 1, l=25))
+dat.ci <- data.frame(x = as.numeric(rownames(ciobj)),
+                     lower = ciobj[, 1],
+                     upper = ciobj[, 3])
+
+ROC_sweden_2 <- ROCdata_func(roc0,combined_strings[2])
+
+ROC_sweden_2
+```
+
+
+
+####### italy 
+
+######## load data
+
+```{r}
+l=load("../Data/ReadyData/ReadyData-second-italy.RData")
+dat_Expr <- t(olink)
+groups <- samples_second[match(colnames(dat_Expr),samples_second$SampleID),"modifiedType",drop=TRUE]
+```
+
+######## make test dataset
+
+```{r}
+second_italy_dataset <- t(dat_Expr)%>%as.data.frame()
+second_italy_dataset <- second_italy_dataset%>%
+  select(moduleGenes)%>%
+  mutate(Class=groups)
+
+second_italy_dataset <- second_italy_dataset%>%
+  filter(Class%in%c("Active","Latent"))
+  
+second_italy_dataset$Class <- factor(second_italy_dataset$Class, levels = c("Active","Latent"))
+data_test <- second_italy_dataset
+```
+
+######## prediction
+
+```{r}
+pred <- predict(svmTune, data_test)
+prob <- predict(svmTune, data_test, type="prob")
+```
+
+######## Confusion matrix
+
+```{r}
+confusionMatrix(pred,data_test$Class)
+```
+
+######## ROC curve
+
+```{r}
+roc0 <- roc(response = data_test$Class, 
+              predictor = predict(svmTune, data_test, type = "prob")[,1], 
+              levels = rev(levels(data_test$Class)),ci=TRUE)
+
+ciobj <- ci.se(roc0, specificities=seq(0, 1, l=25))
+dat.ci <- data.frame(x = as.numeric(rownames(ciobj)),
+                     lower = ciobj[, 1],
+                     upper = ciobj[, 3])
+
+ROC_italy_2 <- ROCdata_func(roc0,combined_strings[2])
+
+ROC_italy_2
+```
+
+####### both
+######## load data
+
+```{r}
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-third-heparin.RData")
+dat_Expr_third_heparin <- t(olink)
+# dat_Expr_third_heparin <- dat_Expr_third_heparin[,!colnames(dat_Expr_third_heparin)%in%c("TB0166.0","TB0102","TB0161")]
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-second-sweden.RData")
+dat_Expr_second_sweden <- t(olink)
+# dat_Expr_second_sweden <- dat_Expr_second_sweden[,!colnames(dat_Expr_second_sweden)%in%c("TB0061")]
+
+groups_third_heparin <- samples_third[match(colnames(dat_Expr_third_heparin),samples_third$SampleID),"modifiedType",drop=TRUE]
+groups_second_sweden <- samples_second[match(colnames(dat_Expr_second_sweden),samples_second$SampleID),"modifiedType",drop=TRUE]
+
+dat_Expr <- dat_Expr_third_heparin%>%
+  cbind(dat_Expr_second_sweden)
+groups <- c(groups_third_heparin,groups_second_sweden)
+
+sweden_dataset <- t(dat_Expr)%>%as.data.frame()
+sweden_dataset <- sweden_dataset%>%
+  select(moduleGenes)%>%
+  mutate(Class=groups)
+
+l=load("../Data/ReadyData/ReadyData-second-italy.RData")
+dat_Expr <- t(olink)
+groups <- samples_second[match(colnames(dat_Expr),samples_second$SampleID),"modifiedType",drop=TRUE]
+
+second_italy_dataset <- t(dat_Expr)%>%as.data.frame()
+second_italy_dataset <- second_italy_dataset%>%
+  select(moduleGenes)%>%
+  mutate(Class=groups)
+```
+
+######## make test dataset 
+
+```{r}
+data_test_both <- sweden_dataset%>%
+  rbind(second_italy_dataset)
+
+data_test_both <- data_test_both%>%
+  filter(Class%in%c("Active","Latent"))
+  
+data_test_both$Class <- factor(data_test_both$Class, levels = c("Active","Latent"))
+data_test <- data_test_both
+```
+
+######## prediction
+
+```{r}
+pred <- predict(svmTune, data_test)
+prob <- predict(svmTune, data_test, type="prob")
+```
+
+######## Confusion matrix
+
+```{r}
+confusionMatrix(pred,data_test$Class)
+```
+
+######## ROC curve
+
+```{r}
+roc0 <- roc(response = data_test$Class, 
+              predictor = predict(svmTune, data_test, type = "prob")[,1], 
+              levels = rev(levels(data_test$Class)),ci=TRUE)
+
+ciobj <- ci.se(roc0, specificities=seq(0, 1, l=25))
+dat.ci <- data.frame(x = as.numeric(rownames(ciobj)),
+                     lower = ciobj[, 1],
+                     upper = ciobj[, 3])
+
+ROC_both_2 <- ROCdata_func(roc0,combined_strings[2])
+
+ROC_both_2
+```
+
+
+## 3
+
+### Markers of signature
+
+```{r}
+combined_strings[3]
+```
+
+### Load data 
+
+```{r message=FALSE, warning=FALSE}
+l=load("../Data/ReadyData/AllDatasets-Samples.RData")
+l=load("../Data/ReadyData/ReadyData-discovery.RData")
+dat_Expr <- olink %>%as.data.frame()
+groups <- samples_first[match(row.names(dat_Expr),samples_first$SampleID),"modifiedType",drop=TRUE]
+
+moduleGenes=combinations[,3]
+
+first_dataset <- dat_Expr%>%as.data.frame()
+first_dataset <- first_dataset%>%
+  select(moduleGenes)%>%
+  mutate(Class=groups)
+```
+
+### Which experiment {.tabset} 
+
+#### Active vs Latent
+
+##### Make train data  
+
+```{r}
+first_dataset_filtered <- first_dataset%>%
+  filter(Class%in%c("Active","Latent"))
+
+first_dataset_filtered$Class <- factor(first_dataset_filtered$Class, levels = c("Active","Latent"))
+data <- first_dataset_filtered
+```
+
+##### Build SVM model
+
+```{r}
+set.seed(123)
+#Defining SVM model
+lpSVM <- list(type = "Classification",
+              library = "kernlab",
+              loop = NULL)
+prm <- data.frame(parameter = c("C", "sigma"),
+                  class = rep("numeric", 2),
+                  label = c("Cost", "Sigma"))
+lpSVM$parameters <- prm
+svmGrid <- function(x, y, len = NULL, search = "grid") {
+  library(kernlab)
+  ## This produces low, middle and high values for sigma 
+  ## (i.e. a vector with 3 elements). 
+  sigmas <- kernlab::sigest(as.matrix(x), na.action = na.omit, scaled = TRUE)  
+  ## To use grid search:
+  if(search == "grid") {
+    out <- expand.grid(sigma = mean(as.vector(sigmas[-2])),
+                       C = 2 ^((1:len) - 3))
+  } else {
+    ## For random search, define ranges for the parameters then
+    ## generate random values for them
+    rng <- extendrange(log(sigmas), f = .75)
+    out <- data.frame(sigma = exp(runif(len, min = rng[1], max = rng[2])),
+                      C = 2^runif(len, min = -5, max = 8))
+  }
+  out
+}
+lpSVM$grid <- svmGrid
+svmFit <- function(x, y, wts, param, lev, last, weights, classProbs, ...) { 
+  kernlab::ksvm(
+    x = as.matrix(x), y = y,
+    kernel = "rbfdot",
+    kpar = list(sigma = param$sigma),
+    C = param$C,
+    prob.model = classProbs,
+    ...
+  )
+}
+
+lpSVM$fit <- svmFit
+svmPred <- function(modelFit, newdata, preProc = NULL, submodels = NULL)
+  kernlab::predict(modelFit, newdata)
+lpSVM$predict <- svmPred
+svmProb <- function(modelFit, newdata, preProc = NULL, submodels = NULL)
+  kernlab::predict(modelFit, newdata, type = "probabilities")
+lpSVM$prob <- svmProb
+svmSort <- function(x) x[order(x$C),]
+lpSVM$sort <- svmSort
+lpSVM$levels <- function(x) kernlab::lev(x)
+```
+
+##### Train SVM model
+
+```{r}
+set.seed(123)
+fitControl <- trainControl(method = "repeatedcv",
+                             ## 10-fold CV...
+                             number = 10,
+                             ## repeated ten times
+                             repeats = 10,
+                             classProbs = TRUE,
+                             summaryFunction = twoClassSummary)
+  
+set.seed(123)
+svmTune <- train(Class ~ ., data = data, 
+                   method = lpSVM, 
+                   preProc = c("center", "scale"),
+                   metric="ROC",
+                   tuneLength = 8,
+                   trControl = fitControl)
+```
+
+##### prediction
+
+```{r}
+pred <- predict(svmTune, data)
+prob <- predict(svmTune, data, type="prob")
+```
+
+##### Confusion matrix
+
+```{r}
+confusionMatrix(pred,data$Class)
+```
+
+##### ROC curve
+
+```{r}
+roc0 <- roc(response = data$Class, 
+              predictor = predict(svmTune, data, type = "prob")[,1], 
+              levels = rev(levels(data$Class)),ci=TRUE)
+
+ciobj <- ci.se(roc0, specificities=seq(0, 1, l=25))
+dat.ci <- data.frame(x = as.numeric(rownames(ciobj)),
+                     lower = ciobj[, 1],
+                     upper = ciobj[, 3])
+
+ROC_discovery_3 <- ROCdata_func(roc0,combined_strings[3])
+
+ROC_discovery_3
+```
+
+##### Test SVM 
+
+###### Which data? {.tabset}
+
+####### sweden
+
+######## load data
+
+```{r}
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-third-heparin.RData")
+dat_Expr_third_heparin <- t(olink)
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-second-sweden.RData")
+dat_Expr_second_sweden <- t(olink)
+
+groups_third_heparin <- samples_third[match(colnames(dat_Expr_third_heparin),samples_third$SampleID),"modifiedType",drop=TRUE]
+groups_second_sweden <- samples_second[match(colnames(dat_Expr_second_sweden),samples_second$SampleID),"modifiedType",drop=TRUE]
+
+dat_Expr <- dat_Expr_third_heparin%>%
+  cbind(dat_Expr_second_sweden)
+groups <- c(groups_third_heparin,groups_second_sweden)
+```
+
+######## make test dataset
+
+```{r}
+sweden_dataset <- t(dat_Expr)%>%as.data.frame()
+sweden_dataset <- sweden_dataset%>%
+  select(moduleGenes)%>%
+  mutate(Class=groups)
+
+sweden_dataset <- sweden_dataset%>%
+  filter(Class%in%c("Active","Latent"))
+  
+sweden_dataset$Class <- factor(sweden_dataset$Class, levels = c("Active","Latent"))
+data_test <- sweden_dataset
+```
+
+######## prediction
+
+```{r}
+pred <- predict(svmTune, data_test)
+prob <- predict(svmTune, data_test, type="prob")
+```
+
+######## Confusion matrix
+
+```{r}
+confusionMatrix(pred,data_test$Class)
+```
+
+######## ROC curve
+
+```{r}
+roc0 <- roc(response = data_test$Class, 
+              predictor = predict(svmTune, data_test, type = "prob")[,1], 
+              levels = rev(levels(data_test$Class)),ci=TRUE)
+
+ciobj <- ci.se(roc0, specificities=seq(0, 1, l=25))
+dat.ci <- data.frame(x = as.numeric(rownames(ciobj)),
+                     lower = ciobj[, 1],
+                     upper = ciobj[, 3])
+
+ROC_sweden_3 <- ROCdata_func(roc0,combined_strings[3])
+
+ROC_sweden_3
+```
+
+
+
+####### italy 
+
+######## load data
+
+```{r}
+l=load("../Data/ReadyData/ReadyData-second-italy.RData")
+dat_Expr <- t(olink)
+groups <- samples_second[match(colnames(dat_Expr),samples_second$SampleID),"modifiedType",drop=TRUE]
+```
+
+######## make test dataset
+
+```{r}
+second_italy_dataset <- t(dat_Expr)%>%as.data.frame()
+second_italy_dataset <- second_italy_dataset%>%
+  select(moduleGenes)%>%
+  mutate(Class=groups)
+
+second_italy_dataset <- second_italy_dataset%>%
+  filter(Class%in%c("Active","Latent"))
+  
+second_italy_dataset$Class <- factor(second_italy_dataset$Class, levels = c("Active","Latent"))
+data_test <- second_italy_dataset
+```
+
+######## prediction
+
+```{r}
+pred <- predict(svmTune, data_test)
+prob <- predict(svmTune, data_test, type="prob")
+```
+
+######## Confusion matrix
+
+```{r}
+confusionMatrix(pred,data_test$Class)
+```
+
+######## ROC curve
+
+```{r}
+roc0 <- roc(response = data_test$Class, 
+              predictor = predict(svmTune, data_test, type = "prob")[,1], 
+              levels = rev(levels(data_test$Class)),ci=TRUE)
+
+ciobj <- ci.se(roc0, specificities=seq(0, 1, l=25))
+dat.ci <- data.frame(x = as.numeric(rownames(ciobj)),
+                     lower = ciobj[, 1],
+                     upper = ciobj[, 3])
+
+ROC_italy_3 <- ROCdata_func(roc0,combined_strings[3])
+
+ROC_italy_3
+```
+
+####### both
+######## load data
+
+```{r}
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-third-heparin.RData")
+dat_Expr_third_heparin <- t(olink)
+# dat_Expr_third_heparin <- dat_Expr_third_heparin[,!colnames(dat_Expr_third_heparin)%in%c("TB0166.0","TB0102","TB0161")]
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-second-sweden.RData")
+dat_Expr_second_sweden <- t(olink)
+# dat_Expr_second_sweden <- dat_Expr_second_sweden[,!colnames(dat_Expr_second_sweden)%in%c("TB0061")]
+
+groups_third_heparin <- samples_third[match(colnames(dat_Expr_third_heparin),samples_third$SampleID),"modifiedType",drop=TRUE]
+groups_second_sweden <- samples_second[match(colnames(dat_Expr_second_sweden),samples_second$SampleID),"modifiedType",drop=TRUE]
+
+dat_Expr <- dat_Expr_third_heparin%>%
+  cbind(dat_Expr_second_sweden)
+groups <- c(groups_third_heparin,groups_second_sweden)
+
+sweden_dataset <- t(dat_Expr)%>%as.data.frame()
+sweden_dataset <- sweden_dataset%>%
+  select(moduleGenes)%>%
+  mutate(Class=groups)
+
+l=load("../Data/ReadyData/ReadyData-second-italy.RData")
+dat_Expr <- t(olink)
+groups <- samples_second[match(colnames(dat_Expr),samples_second$SampleID),"modifiedType",drop=TRUE]
+
+second_italy_dataset <- t(dat_Expr)%>%as.data.frame()
+second_italy_dataset <- second_italy_dataset%>%
+  select(moduleGenes)%>%
+  mutate(Class=groups)
+```
+
+######## make test dataset 
+
+```{r}
+data_test_both <- sweden_dataset%>%
+  rbind(second_italy_dataset)
+
+data_test_both <- data_test_both%>%
+  filter(Class%in%c("Active","Latent"))
+  
+data_test_both$Class <- factor(data_test_both$Class, levels = c("Active","Latent"))
+data_test <- data_test_both
+```
+
+######## prediction
+
+```{r}
+pred <- predict(svmTune, data_test)
+prob <- predict(svmTune, data_test, type="prob")
+```
+
+######## Confusion matrix
+
+```{r}
+confusionMatrix(pred,data_test$Class)
+```
+
+######## ROC curve
+
+```{r}
+roc0 <- roc(response = data_test$Class, 
+              predictor = predict(svmTune, data_test, type = "prob")[,1], 
+              levels = rev(levels(data_test$Class)),ci=TRUE)
+
+ciobj <- ci.se(roc0, specificities=seq(0, 1, l=25))
+dat.ci <- data.frame(x = as.numeric(rownames(ciobj)),
+                     lower = ciobj[, 1],
+                     upper = ciobj[, 3])
+
+ROC_both_3 <- ROCdata_func(roc0,combined_strings[3])
+
+ROC_both_3
+```
+
+
+## 4
+
+### Markers of signature
+
+```{r}
+combined_strings[4]
+```
+
+### Load data 
+
+```{r message=FALSE, warning=FALSE}
+l=load("../Data/ReadyData/AllDatasets-Samples.RData")
+l=load("../Data/ReadyData/ReadyData-discovery.RData")
+dat_Expr <- olink %>%as.data.frame()
+groups <- samples_first[match(row.names(dat_Expr),samples_first$SampleID),"modifiedType",drop=TRUE]
+
+moduleGenes=combinations[,4]
+
+first_dataset <- dat_Expr%>%as.data.frame()
+first_dataset <- first_dataset%>%
+  select(moduleGenes)%>%
+  mutate(Class=groups)
+```
+
+### Which experiment {.tabset} 
+
+#### Active vs Latent
+
+##### Make train data  
+
+```{r}
+first_dataset_filtered <- first_dataset%>%
+  filter(Class%in%c("Active","Latent"))
+
+first_dataset_filtered$Class <- factor(first_dataset_filtered$Class, levels = c("Active","Latent"))
+data <- first_dataset_filtered
+```
+
+##### Build SVM model
+
+```{r}
+set.seed(123)
+#Defining SVM model
+lpSVM <- list(type = "Classification",
+              library = "kernlab",
+              loop = NULL)
+prm <- data.frame(parameter = c("C", "sigma"),
+                  class = rep("numeric", 2),
+                  label = c("Cost", "Sigma"))
+lpSVM$parameters <- prm
+svmGrid <- function(x, y, len = NULL, search = "grid") {
+  library(kernlab)
+  ## This produces low, middle and high values for sigma 
+  ## (i.e. a vector with 3 elements). 
+  sigmas <- kernlab::sigest(as.matrix(x), na.action = na.omit, scaled = TRUE)  
+  ## To use grid search:
+  if(search == "grid") {
+    out <- expand.grid(sigma = mean(as.vector(sigmas[-2])),
+                       C = 2 ^((1:len) - 3))
+  } else {
+    ## For random search, define ranges for the parameters then
+    ## generate random values for them
+    rng <- extendrange(log(sigmas), f = .75)
+    out <- data.frame(sigma = exp(runif(len, min = rng[1], max = rng[2])),
+                      C = 2^runif(len, min = -5, max = 8))
+  }
+  out
+}
+lpSVM$grid <- svmGrid
+svmFit <- function(x, y, wts, param, lev, last, weights, classProbs, ...) { 
+  kernlab::ksvm(
+    x = as.matrix(x), y = y,
+    kernel = "rbfdot",
+    kpar = list(sigma = param$sigma),
+    C = param$C,
+    prob.model = classProbs,
+    ...
+  )
+}
+
+lpSVM$fit <- svmFit
+svmPred <- function(modelFit, newdata, preProc = NULL, submodels = NULL)
+  kernlab::predict(modelFit, newdata)
+lpSVM$predict <- svmPred
+svmProb <- function(modelFit, newdata, preProc = NULL, submodels = NULL)
+  kernlab::predict(modelFit, newdata, type = "probabilities")
+lpSVM$prob <- svmProb
+svmSort <- function(x) x[order(x$C),]
+lpSVM$sort <- svmSort
+lpSVM$levels <- function(x) kernlab::lev(x)
+```
+
+##### Train SVM model
+
+```{r}
+set.seed(123)
+fitControl <- trainControl(method = "repeatedcv",
+                             ## 10-fold CV...
+                             number = 10,
+                             ## repeated ten times
+                             repeats = 10,
+                             classProbs = TRUE,
+                             summaryFunction = twoClassSummary)
+  
+set.seed(123)
+svmTune <- train(Class ~ ., data = data, 
+                   method = lpSVM, 
+                   preProc = c("center", "scale"),
+                   metric="ROC",
+                   tuneLength = 8,
+                   trControl = fitControl)
+```
+
+##### prediction
+
+```{r}
+pred <- predict(svmTune, data)
+prob <- predict(svmTune, data, type="prob")
+```
+
+##### Confusion matrix
+
+```{r}
+confusionMatrix(pred,data$Class)
+```
+
+##### ROC curve
+
+```{r}
+roc0 <- roc(response = data$Class, 
+              predictor = predict(svmTune, data, type = "prob")[,1], 
+              levels = rev(levels(data$Class)),ci=TRUE)
+
+ciobj <- ci.se(roc0, specificities=seq(0, 1, l=25))
+dat.ci <- data.frame(x = as.numeric(rownames(ciobj)),
+                     lower = ciobj[, 1],
+                     upper = ciobj[, 3])
+
+ROC_discovery_4 <- ROCdata_func(roc0,combined_strings[4])
+
+ROC_discovery_4
+```
+
+##### Test SVM 
+
+###### Which data? {.tabset}
+
+####### sweden
+
+######## load data
+
+```{r}
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-third-heparin.RData")
+dat_Expr_third_heparin <- t(olink)
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-second-sweden.RData")
+dat_Expr_second_sweden <- t(olink)
+
+groups_third_heparin <- samples_third[match(colnames(dat_Expr_third_heparin),samples_third$SampleID),"modifiedType",drop=TRUE]
+groups_second_sweden <- samples_second[match(colnames(dat_Expr_second_sweden),samples_second$SampleID),"modifiedType",drop=TRUE]
+
+dat_Expr <- dat_Expr_third_heparin%>%
+  cbind(dat_Expr_second_sweden)
+groups <- c(groups_third_heparin,groups_second_sweden)
+```
+
+######## make test dataset
+
+```{r}
+sweden_dataset <- t(dat_Expr)%>%as.data.frame()
+sweden_dataset <- sweden_dataset%>%
+  select(moduleGenes)%>%
+  mutate(Class=groups)
+
+sweden_dataset <- sweden_dataset%>%
+  filter(Class%in%c("Active","Latent"))
+  
+sweden_dataset$Class <- factor(sweden_dataset$Class, levels = c("Active","Latent"))
+data_test <- sweden_dataset
+```
+
+######## prediction
+
+```{r}
+pred <- predict(svmTune, data_test)
+prob <- predict(svmTune, data_test, type="prob")
+```
+
+######## Confusion matrix
+
+```{r}
+confusionMatrix(pred,data_test$Class)
+```
+
+######## ROC curve
+
+```{r}
+roc0 <- roc(response = data_test$Class, 
+              predictor = predict(svmTune, data_test, type = "prob")[,1], 
+              levels = rev(levels(data_test$Class)),ci=TRUE)
+
+ciobj <- ci.se(roc0, specificities=seq(0, 1, l=25))
+dat.ci <- data.frame(x = as.numeric(rownames(ciobj)),
+                     lower = ciobj[, 1],
+                     upper = ciobj[, 3])
+
+ROC_sweden_4 <- ROCdata_func(roc0,combined_strings[4])
+
+ROC_sweden_4
+```
+
+
+
+####### italy 
+
+######## load data
+
+```{r}
+l=load("../Data/ReadyData/ReadyData-second-italy.RData")
+dat_Expr <- t(olink)
+groups <- samples_second[match(colnames(dat_Expr),samples_second$SampleID),"modifiedType",drop=TRUE]
+```
+
+######## make test dataset
+
+```{r}
+second_italy_dataset <- t(dat_Expr)%>%as.data.frame()
+second_italy_dataset <- second_italy_dataset%>%
+  select(moduleGenes)%>%
+  mutate(Class=groups)
+
+second_italy_dataset <- second_italy_dataset%>%
+  filter(Class%in%c("Active","Latent"))
+  
+second_italy_dataset$Class <- factor(second_italy_dataset$Class, levels = c("Active","Latent"))
+data_test <- second_italy_dataset
+```
+
+######## prediction
+
+```{r}
+pred <- predict(svmTune, data_test)
+prob <- predict(svmTune, data_test, type="prob")
+```
+
+######## Confusion matrix
+
+```{r}
+confusionMatrix(pred,data_test$Class)
+```
+
+######## ROC curve
+
+```{r}
+roc0 <- roc(response = data_test$Class, 
+              predictor = predict(svmTune, data_test, type = "prob")[,1], 
+              levels = rev(levels(data_test$Class)),ci=TRUE)
+
+ciobj <- ci.se(roc0, specificities=seq(0, 1, l=25))
+dat.ci <- data.frame(x = as.numeric(rownames(ciobj)),
+                     lower = ciobj[, 1],
+                     upper = ciobj[, 3])
+
+ROC_italy_4 <- ROCdata_func(roc0,combined_strings[4])
+
+ROC_italy_4
+```
+
+####### both
+######## load data
+
+```{r}
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-third-heparin.RData")
+dat_Expr_third_heparin <- t(olink)
+# dat_Expr_third_heparin <- dat_Expr_third_heparin[,!colnames(dat_Expr_third_heparin)%in%c("TB0166.0","TB0102","TB0161")]
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-second-sweden.RData")
+dat_Expr_second_sweden <- t(olink)
+# dat_Expr_second_sweden <- dat_Expr_second_sweden[,!colnames(dat_Expr_second_sweden)%in%c("TB0061")]
+
+groups_third_heparin <- samples_third[match(colnames(dat_Expr_third_heparin),samples_third$SampleID),"modifiedType",drop=TRUE]
+groups_second_sweden <- samples_second[match(colnames(dat_Expr_second_sweden),samples_second$SampleID),"modifiedType",drop=TRUE]
+
+dat_Expr <- dat_Expr_third_heparin%>%
+  cbind(dat_Expr_second_sweden)
+groups <- c(groups_third_heparin,groups_second_sweden)
+
+sweden_dataset <- t(dat_Expr)%>%as.data.frame()
+sweden_dataset <- sweden_dataset%>%
+  select(moduleGenes)%>%
+  mutate(Class=groups)
+
+l=load("../Data/ReadyData/ReadyData-second-italy.RData")
+dat_Expr <- t(olink)
+groups <- samples_second[match(colnames(dat_Expr),samples_second$SampleID),"modifiedType",drop=TRUE]
+
+second_italy_dataset <- t(dat_Expr)%>%as.data.frame()
+second_italy_dataset <- second_italy_dataset%>%
+  select(moduleGenes)%>%
+  mutate(Class=groups)
+```
+
+######## make test dataset 
+
+```{r}
+data_test_both <- sweden_dataset%>%
+  rbind(second_italy_dataset)
+
+data_test_both <- data_test_both%>%
+  filter(Class%in%c("Active","Latent"))
+  
+data_test_both$Class <- factor(data_test_both$Class, levels = c("Active","Latent"))
+data_test <- data_test_both
+```
+
+######## prediction
+
+```{r}
+pred <- predict(svmTune, data_test)
+prob <- predict(svmTune, data_test, type="prob")
+```
+
+######## Confusion matrix
+
+```{r}
+confusionMatrix(pred,data_test$Class)
+```
+
+######## ROC curve
+
+```{r}
+roc0 <- roc(response = data_test$Class, 
+              predictor = predict(svmTune, data_test, type = "prob")[,1], 
+              levels = rev(levels(data_test$Class)),ci=TRUE)
+
+ciobj <- ci.se(roc0, specificities=seq(0, 1, l=25))
+dat.ci <- data.frame(x = as.numeric(rownames(ciobj)),
+                     lower = ciobj[, 1],
+                     upper = ciobj[, 3])
+
+ROC_both_4 <- ROCdata_func(roc0,combined_strings[4])
+
+ROC_both_4
+```
+
+
+## 5
+
+### Markers of signature
+
+```{r}
+combined_strings[5]
+```
+
+### Load data 
+
+```{r message=FALSE, warning=FALSE}
+l=load("../Data/ReadyData/AllDatasets-Samples.RData")
+l=load("../Data/ReadyData/ReadyData-discovery.RData")
+dat_Expr <- olink %>%as.data.frame()
+groups <- samples_first[match(row.names(dat_Expr),samples_first$SampleID),"modifiedType",drop=TRUE]
+
+moduleGenes=combinations[,5]
+
+first_dataset <- dat_Expr%>%as.data.frame()
+first_dataset <- first_dataset%>%
+  select(moduleGenes)%>%
+  mutate(Class=groups)
+```
+
+### Which experiment {.tabset} 
+
+#### Active vs Latent
+
+##### Make train data  
+
+```{r}
+first_dataset_filtered <- first_dataset%>%
+  filter(Class%in%c("Active","Latent"))
+
+first_dataset_filtered$Class <- factor(first_dataset_filtered$Class, levels = c("Active","Latent"))
+data <- first_dataset_filtered
+```
+
+##### Build SVM model
+
+```{r}
+set.seed(123)
+#Defining SVM model
+lpSVM <- list(type = "Classification",
+              library = "kernlab",
+              loop = NULL)
+prm <- data.frame(parameter = c("C", "sigma"),
+                  class = rep("numeric", 2),
+                  label = c("Cost", "Sigma"))
+lpSVM$parameters <- prm
+svmGrid <- function(x, y, len = NULL, search = "grid") {
+  library(kernlab)
+  ## This produces low, middle and high values for sigma 
+  ## (i.e. a vector with 3 elements). 
+  sigmas <- kernlab::sigest(as.matrix(x), na.action = na.omit, scaled = TRUE)  
+  ## To use grid search:
+  if(search == "grid") {
+    out <- expand.grid(sigma = mean(as.vector(sigmas[-2])),
+                       C = 2 ^((1:len) - 3))
+  } else {
+    ## For random search, define ranges for the parameters then
+    ## generate random values for them
+    rng <- extendrange(log(sigmas), f = .75)
+    out <- data.frame(sigma = exp(runif(len, min = rng[1], max = rng[2])),
+                      C = 2^runif(len, min = -5, max = 8))
+  }
+  out
+}
+lpSVM$grid <- svmGrid
+svmFit <- function(x, y, wts, param, lev, last, weights, classProbs, ...) { 
+  kernlab::ksvm(
+    x = as.matrix(x), y = y,
+    kernel = "rbfdot",
+    kpar = list(sigma = param$sigma),
+    C = param$C,
+    prob.model = classProbs,
+    ...
+  )
+}
+
+lpSVM$fit <- svmFit
+svmPred <- function(modelFit, newdata, preProc = NULL, submodels = NULL)
+  kernlab::predict(modelFit, newdata)
+lpSVM$predict <- svmPred
+svmProb <- function(modelFit, newdata, preProc = NULL, submodels = NULL)
+  kernlab::predict(modelFit, newdata, type = "probabilities")
+lpSVM$prob <- svmProb
+svmSort <- function(x) x[order(x$C),]
+lpSVM$sort <- svmSort
+lpSVM$levels <- function(x) kernlab::lev(x)
+```
+
+##### Train SVM model
+
+```{r}
+set.seed(123)
+fitControl <- trainControl(method = "repeatedcv",
+                             ## 10-fold CV...
+                             number = 10,
+                             ## repeated ten times
+                             repeats = 10,
+                             classProbs = TRUE,
+                             summaryFunction = twoClassSummary)
+  
+set.seed(123)
+svmTune <- train(Class ~ ., data = data, 
+                   method = lpSVM, 
+                   preProc = c("center", "scale"),
+                   metric="ROC",
+                   tuneLength = 8,
+                   trControl = fitControl)
+```
+
+##### prediction
+
+```{r}
+pred <- predict(svmTune, data)
+prob <- predict(svmTune, data, type="prob")
+```
+
+##### Confusion matrix
+
+```{r}
+confusionMatrix(pred,data$Class)
+```
+
+##### ROC curve
+
+```{r}
+roc0 <- roc(response = data$Class, 
+              predictor = predict(svmTune, data, type = "prob")[,1], 
+              levels = rev(levels(data$Class)),ci=TRUE)
+
+ciobj <- ci.se(roc0, specificities=seq(0, 1, l=25))
+dat.ci <- data.frame(x = as.numeric(rownames(ciobj)),
+                     lower = ciobj[, 1],
+                     upper = ciobj[, 3])
+
+ROC_discovery_5 <- ROCdata_func(roc0,combined_strings[5])
+
+ROC_discovery_5
+```
+
+##### Test SVM 
+
+###### Which data? {.tabset}
+
+####### sweden
+
+######## load data
+
+```{r}
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-third-heparin.RData")
+dat_Expr_third_heparin <- t(olink)
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-second-sweden.RData")
+dat_Expr_second_sweden <- t(olink)
+
+groups_third_heparin <- samples_third[match(colnames(dat_Expr_third_heparin),samples_third$SampleID),"modifiedType",drop=TRUE]
+groups_second_sweden <- samples_second[match(colnames(dat_Expr_second_sweden),samples_second$SampleID),"modifiedType",drop=TRUE]
+
+dat_Expr <- dat_Expr_third_heparin%>%
+  cbind(dat_Expr_second_sweden)
+groups <- c(groups_third_heparin,groups_second_sweden)
+```
+
+######## make test dataset
+
+```{r}
+sweden_dataset <- t(dat_Expr)%>%as.data.frame()
+sweden_dataset <- sweden_dataset%>%
+  select(moduleGenes)%>%
+  mutate(Class=groups)
+
+sweden_dataset <- sweden_dataset%>%
+  filter(Class%in%c("Active","Latent"))
+  
+sweden_dataset$Class <- factor(sweden_dataset$Class, levels = c("Active","Latent"))
+data_test <- sweden_dataset
+```
+
+######## prediction
+
+```{r}
+pred <- predict(svmTune, data_test)
+prob <- predict(svmTune, data_test, type="prob")
+```
+
+######## Confusion matrix
+
+```{r}
+confusionMatrix(pred,data_test$Class)
+```
+
+######## ROC curve
+
+```{r}
+roc0 <- roc(response = data_test$Class, 
+              predictor = predict(svmTune, data_test, type = "prob")[,1], 
+              levels = rev(levels(data_test$Class)),ci=TRUE)
+
+ciobj <- ci.se(roc0, specificities=seq(0, 1, l=25))
+dat.ci <- data.frame(x = as.numeric(rownames(ciobj)),
+                     lower = ciobj[, 1],
+                     upper = ciobj[, 3])
+
+ROC_sweden_5 <- ROCdata_func(roc0,combined_strings[5])
+
+ROC_sweden_5
+```
+
+
+
+####### italy 
+
+######## load data
+
+```{r}
+l=load("../Data/ReadyData/ReadyData-second-italy.RData")
+dat_Expr <- t(olink)
+groups <- samples_second[match(colnames(dat_Expr),samples_second$SampleID),"modifiedType",drop=TRUE]
+```
+
+######## make test dataset
+
+```{r}
+second_italy_dataset <- t(dat_Expr)%>%as.data.frame()
+second_italy_dataset <- second_italy_dataset%>%
+  select(moduleGenes)%>%
+  mutate(Class=groups)
+
+second_italy_dataset <- second_italy_dataset%>%
+  filter(Class%in%c("Active","Latent"))
+  
+second_italy_dataset$Class <- factor(second_italy_dataset$Class, levels = c("Active","Latent"))
+data_test <- second_italy_dataset
+```
+
+######## prediction
+
+```{r}
+pred <- predict(svmTune, data_test)
+prob <- predict(svmTune, data_test, type="prob")
+```
+
+######## Confusion matrix
+
+```{r}
+confusionMatrix(pred,data_test$Class)
+```
+
+######## ROC curve
+
+```{r}
+roc0 <- roc(response = data_test$Class, 
+              predictor = predict(svmTune, data_test, type = "prob")[,1], 
+              levels = rev(levels(data_test$Class)),ci=TRUE)
+
+ciobj <- ci.se(roc0, specificities=seq(0, 1, l=25))
+dat.ci <- data.frame(x = as.numeric(rownames(ciobj)),
+                     lower = ciobj[, 1],
+                     upper = ciobj[, 3])
+
+ROC_italy_5 <- ROCdata_func(roc0,combined_strings[5])
+
+ROC_italy_5
+```
+
+####### both
+######## load data
+
+```{r}
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-third-heparin.RData")
+dat_Expr_third_heparin <- t(olink)
+# dat_Expr_third_heparin <- dat_Expr_third_heparin[,!colnames(dat_Expr_third_heparin)%in%c("TB0166.0","TB0102","TB0161")]
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-second-sweden.RData")
+dat_Expr_second_sweden <- t(olink)
+# dat_Expr_second_sweden <- dat_Expr_second_sweden[,!colnames(dat_Expr_second_sweden)%in%c("TB0061")]
+
+groups_third_heparin <- samples_third[match(colnames(dat_Expr_third_heparin),samples_third$SampleID),"modifiedType",drop=TRUE]
+groups_second_sweden <- samples_second[match(colnames(dat_Expr_second_sweden),samples_second$SampleID),"modifiedType",drop=TRUE]
+
+dat_Expr <- dat_Expr_third_heparin%>%
+  cbind(dat_Expr_second_sweden)
+groups <- c(groups_third_heparin,groups_second_sweden)
+
+sweden_dataset <- t(dat_Expr)%>%as.data.frame()
+sweden_dataset <- sweden_dataset%>%
+  select(moduleGenes)%>%
+  mutate(Class=groups)
+
+l=load("../Data/ReadyData/ReadyData-second-italy.RData")
+dat_Expr <- t(olink)
+groups <- samples_second[match(colnames(dat_Expr),samples_second$SampleID),"modifiedType",drop=TRUE]
+
+second_italy_dataset <- t(dat_Expr)%>%as.data.frame()
+second_italy_dataset <- second_italy_dataset%>%
+  select(moduleGenes)%>%
+  mutate(Class=groups)
+```
+
+######## make test dataset 
+
+```{r}
+data_test_both <- sweden_dataset%>%
+  rbind(second_italy_dataset)
+
+data_test_both <- data_test_both%>%
+  filter(Class%in%c("Active","Latent"))
+  
+data_test_both$Class <- factor(data_test_both$Class, levels = c("Active","Latent"))
+data_test <- data_test_both
+```
+
+######## prediction
+
+```{r}
+pred <- predict(svmTune, data_test)
+prob <- predict(svmTune, data_test, type="prob")
+```
+
+######## Confusion matrix
+
+```{r}
+confusionMatrix(pred,data_test$Class)
+```
+
+######## ROC curve
+
+```{r}
+roc0 <- roc(response = data_test$Class, 
+              predictor = predict(svmTune, data_test, type = "prob")[,1], 
+              levels = rev(levels(data_test$Class)),ci=TRUE)
+
+ciobj <- ci.se(roc0, specificities=seq(0, 1, l=25))
+dat.ci <- data.frame(x = as.numeric(rownames(ciobj)),
+                     lower = ciobj[, 1],
+                     upper = ciobj[, 3])
+
+ROC_both_5 <- ROCdata_func(roc0,combined_strings[5])
+
+ROC_both_5
+```
+
+
+## 6
+
+### Markers of signature
+
+```{r}
+combined_strings[6]
+```
+
+### Load data 
+
+```{r message=FALSE, warning=FALSE}
+l=load("../Data/ReadyData/AllDatasets-Samples.RData")
+l=load("../Data/ReadyData/ReadyData-discovery.RData")
+dat_Expr <- olink %>%as.data.frame()
+groups <- samples_first[match(row.names(dat_Expr),samples_first$SampleID),"modifiedType",drop=TRUE]
+
+moduleGenes=combinations[,6]
+
+first_dataset <- dat_Expr%>%as.data.frame()
+first_dataset <- first_dataset%>%
+  select(moduleGenes)%>%
+  mutate(Class=groups)
+```
+
+### Which experiment {.tabset} 
+
+#### Active vs Latent
+
+##### Make train data  
+
+```{r}
+first_dataset_filtered <- first_dataset%>%
+  filter(Class%in%c("Active","Latent"))
+
+first_dataset_filtered$Class <- factor(first_dataset_filtered$Class, levels = c("Active","Latent"))
+data <- first_dataset_filtered
+```
+
+##### Build SVM model
+
+```{r}
+set.seed(123)
+#Defining SVM model
+lpSVM <- list(type = "Classification",
+              library = "kernlab",
+              loop = NULL)
+prm <- data.frame(parameter = c("C", "sigma"),
+                  class = rep("numeric", 2),
+                  label = c("Cost", "Sigma"))
+lpSVM$parameters <- prm
+svmGrid <- function(x, y, len = NULL, search = "grid") {
+  library(kernlab)
+  ## This produces low, middle and high values for sigma 
+  ## (i.e. a vector with 3 elements). 
+  sigmas <- kernlab::sigest(as.matrix(x), na.action = na.omit, scaled = TRUE)  
+  ## To use grid search:
+  if(search == "grid") {
+    out <- expand.grid(sigma = mean(as.vector(sigmas[-2])),
+                       C = 2 ^((1:len) - 3))
+  } else {
+    ## For random search, define ranges for the parameters then
+    ## generate random values for them
+    rng <- extendrange(log(sigmas), f = .75)
+    out <- data.frame(sigma = exp(runif(len, min = rng[1], max = rng[2])),
+                      C = 2^runif(len, min = -5, max = 8))
+  }
+  out
+}
+lpSVM$grid <- svmGrid
+svmFit <- function(x, y, wts, param, lev, last, weights, classProbs, ...) { 
+  kernlab::ksvm(
+    x = as.matrix(x), y = y,
+    kernel = "rbfdot",
+    kpar = list(sigma = param$sigma),
+    C = param$C,
+    prob.model = classProbs,
+    ...
+  )
+}
+
+lpSVM$fit <- svmFit
+svmPred <- function(modelFit, newdata, preProc = NULL, submodels = NULL)
+  kernlab::predict(modelFit, newdata)
+lpSVM$predict <- svmPred
+svmProb <- function(modelFit, newdata, preProc = NULL, submodels = NULL)
+  kernlab::predict(modelFit, newdata, type = "probabilities")
+lpSVM$prob <- svmProb
+svmSort <- function(x) x[order(x$C),]
+lpSVM$sort <- svmSort
+lpSVM$levels <- function(x) kernlab::lev(x)
+```
+
+##### Train SVM model
+
+```{r}
+set.seed(123)
+fitControl <- trainControl(method = "repeatedcv",
+                             ## 10-fold CV...
+                             number = 10,
+                             ## repeated ten times
+                             repeats = 10,
+                             classProbs = TRUE,
+                             summaryFunction = twoClassSummary)
+  
+set.seed(123)
+svmTune <- train(Class ~ ., data = data, 
+                   method = lpSVM, 
+                   preProc = c("center", "scale"),
+                   metric="ROC",
+                   tuneLength = 8,
+                   trControl = fitControl)
+```
+
+##### prediction
+
+```{r}
+pred <- predict(svmTune, data)
+prob <- predict(svmTune, data, type="prob")
+```
+
+##### Confusion matrix
+
+```{r}
+confusionMatrix(pred,data$Class)
+```
+
+##### ROC curve
+
+```{r}
+roc0 <- roc(response = data$Class, 
+              predictor = predict(svmTune, data, type = "prob")[,1], 
+              levels = rev(levels(data$Class)),ci=TRUE)
+
+ciobj <- ci.se(roc0, specificities=seq(0, 1, l=25))
+dat.ci <- data.frame(x = as.numeric(rownames(ciobj)),
+                     lower = ciobj[, 1],
+                     upper = ciobj[, 3])
+
+ROC_discovery_6 <- ROCdata_func(roc0,combined_strings[6])
+
+ROC_discovery_6
+```
+
+##### Test SVM 
+
+###### Which data? {.tabset}
+
+####### sweden
+
+######## load data
+
+```{r}
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-third-heparin.RData")
+dat_Expr_third_heparin <- t(olink)
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-second-sweden.RData")
+dat_Expr_second_sweden <- t(olink)
+
+groups_third_heparin <- samples_third[match(colnames(dat_Expr_third_heparin),samples_third$SampleID),"modifiedType",drop=TRUE]
+groups_second_sweden <- samples_second[match(colnames(dat_Expr_second_sweden),samples_second$SampleID),"modifiedType",drop=TRUE]
+
+dat_Expr <- dat_Expr_third_heparin%>%
+  cbind(dat_Expr_second_sweden)
+groups <- c(groups_third_heparin,groups_second_sweden)
+```
+
+######## make test dataset
+
+```{r}
+sweden_dataset <- t(dat_Expr)%>%as.data.frame()
+sweden_dataset <- sweden_dataset%>%
+  select(moduleGenes)%>%
+  mutate(Class=groups)
+
+sweden_dataset <- sweden_dataset%>%
+  filter(Class%in%c("Active","Latent"))
+  
+sweden_dataset$Class <- factor(sweden_dataset$Class, levels = c("Active","Latent"))
+data_test <- sweden_dataset
+```
+
+######## prediction
+
+```{r}
+pred <- predict(svmTune, data_test)
+prob <- predict(svmTune, data_test, type="prob")
+```
+
+######## Confusion matrix
+
+```{r}
+confusionMatrix(pred,data_test$Class)
+```
+
+######## ROC curve
+
+```{r}
+roc0 <- roc(response = data_test$Class, 
+              predictor = predict(svmTune, data_test, type = "prob")[,1], 
+              levels = rev(levels(data_test$Class)),ci=TRUE)
+
+ciobj <- ci.se(roc0, specificities=seq(0, 1, l=25))
+dat.ci <- data.frame(x = as.numeric(rownames(ciobj)),
+                     lower = ciobj[, 1],
+                     upper = ciobj[, 3])
+
+ROC_sweden_6 <- ROCdata_func(roc0,combined_strings[6])
+
+ROC_sweden_6
+```
+
+
+
+####### italy 
+
+######## load data
+
+```{r}
+l=load("../Data/ReadyData/ReadyData-second-italy.RData")
+dat_Expr <- t(olink)
+groups <- samples_second[match(colnames(dat_Expr),samples_second$SampleID),"modifiedType",drop=TRUE]
+```
+
+######## make test dataset
+
+```{r}
+second_italy_dataset <- t(dat_Expr)%>%as.data.frame()
+second_italy_dataset <- second_italy_dataset%>%
+  select(moduleGenes)%>%
+  mutate(Class=groups)
+
+second_italy_dataset <- second_italy_dataset%>%
+  filter(Class%in%c("Active","Latent"))
+  
+second_italy_dataset$Class <- factor(second_italy_dataset$Class, levels = c("Active","Latent"))
+data_test <- second_italy_dataset
+```
+
+######## prediction
+
+```{r}
+pred <- predict(svmTune, data_test)
+prob <- predict(svmTune, data_test, type="prob")
+```
+
+######## Confusion matrix
+
+```{r}
+confusionMatrix(pred,data_test$Class)
+```
+
+######## ROC curve
+
+```{r}
+roc0 <- roc(response = data_test$Class, 
+              predictor = predict(svmTune, data_test, type = "prob")[,1], 
+              levels = rev(levels(data_test$Class)),ci=TRUE)
+
+ciobj <- ci.se(roc0, specificities=seq(0, 1, l=25))
+dat.ci <- data.frame(x = as.numeric(rownames(ciobj)),
+                     lower = ciobj[, 1],
+                     upper = ciobj[, 3])
+
+ROC_italy_6 <- ROCdata_func(roc0,combined_strings[6])
+
+ROC_italy_6
+```
+
+####### both
+######## load data
+
+```{r}
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-third-heparin.RData")
+dat_Expr_third_heparin <- t(olink)
+# dat_Expr_third_heparin <- dat_Expr_third_heparin[,!colnames(dat_Expr_third_heparin)%in%c("TB0166.0","TB0102","TB0161")]
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-second-sweden.RData")
+dat_Expr_second_sweden <- t(olink)
+# dat_Expr_second_sweden <- dat_Expr_second_sweden[,!colnames(dat_Expr_second_sweden)%in%c("TB0061")]
+
+groups_third_heparin <- samples_third[match(colnames(dat_Expr_third_heparin),samples_third$SampleID),"modifiedType",drop=TRUE]
+groups_second_sweden <- samples_second[match(colnames(dat_Expr_second_sweden),samples_second$SampleID),"modifiedType",drop=TRUE]
+
+dat_Expr <- dat_Expr_third_heparin%>%
+  cbind(dat_Expr_second_sweden)
+groups <- c(groups_third_heparin,groups_second_sweden)
+
+sweden_dataset <- t(dat_Expr)%>%as.data.frame()
+sweden_dataset <- sweden_dataset%>%
+  select(moduleGenes)%>%
+  mutate(Class=groups)
+
+l=load("../Data/ReadyData/ReadyData-second-italy.RData")
+dat_Expr <- t(olink)
+groups <- samples_second[match(colnames(dat_Expr),samples_second$SampleID),"modifiedType",drop=TRUE]
+
+second_italy_dataset <- t(dat_Expr)%>%as.data.frame()
+second_italy_dataset <- second_italy_dataset%>%
+  select(moduleGenes)%>%
+  mutate(Class=groups)
+```
+
+######## make test dataset 
+
+```{r}
+data_test_both <- sweden_dataset%>%
+  rbind(second_italy_dataset)
+
+data_test_both <- data_test_both%>%
+  filter(Class%in%c("Active","Latent"))
+  
+data_test_both$Class <- factor(data_test_both$Class, levels = c("Active","Latent"))
+data_test <- data_test_both
+```
+
+######## prediction
+
+```{r}
+pred <- predict(svmTune, data_test)
+prob <- predict(svmTune, data_test, type="prob")
+```
+
+######## Confusion matrix
+
+```{r}
+confusionMatrix(pred,data_test$Class)
+```
+
+######## ROC curve
+
+```{r}
+roc0 <- roc(response = data_test$Class, 
+              predictor = predict(svmTune, data_test, type = "prob")[,1], 
+              levels = rev(levels(data_test$Class)),ci=TRUE)
+
+ciobj <- ci.se(roc0, specificities=seq(0, 1, l=25))
+dat.ci <- data.frame(x = as.numeric(rownames(ciobj)),
+                     lower = ciobj[, 1],
+                     upper = ciobj[, 3])
+
+ROC_both_6 <- ROCdata_func(roc0,combined_strings[6])
+
+ROC_both_6
+```
+
+
+## 7
+
+### Markers of signature
+
+```{r}
+combined_strings[7]
+```
+
+### Load data 
+
+```{r message=FALSE, warning=FALSE}
+l=load("../Data/ReadyData/AllDatasets-Samples.RData")
+l=load("../Data/ReadyData/ReadyData-discovery.RData")
+dat_Expr <- olink %>%as.data.frame()
+groups <- samples_first[match(row.names(dat_Expr),samples_first$SampleID),"modifiedType",drop=TRUE]
+
+moduleGenes=combinations[,7]
+
+first_dataset <- dat_Expr%>%as.data.frame()
+first_dataset <- first_dataset%>%
+  select(moduleGenes)%>%
+  mutate(Class=groups)
+```
+
+### Which experiment {.tabset} 
+
+#### Active vs Latent
+
+##### Make train data  
+
+```{r}
+first_dataset_filtered <- first_dataset%>%
+  filter(Class%in%c("Active","Latent"))
+
+first_dataset_filtered$Class <- factor(first_dataset_filtered$Class, levels = c("Active","Latent"))
+data <- first_dataset_filtered
+```
+
+##### Build SVM model
+
+```{r}
+set.seed(123)
+#Defining SVM model
+lpSVM <- list(type = "Classification",
+              library = "kernlab",
+              loop = NULL)
+prm <- data.frame(parameter = c("C", "sigma"),
+                  class = rep("numeric", 2),
+                  label = c("Cost", "Sigma"))
+lpSVM$parameters <- prm
+svmGrid <- function(x, y, len = NULL, search = "grid") {
+  library(kernlab)
+  ## This produces low, middle and high values for sigma 
+  ## (i.e. a vector with 3 elements). 
+  sigmas <- kernlab::sigest(as.matrix(x), na.action = na.omit, scaled = TRUE)  
+  ## To use grid search:
+  if(search == "grid") {
+    out <- expand.grid(sigma = mean(as.vector(sigmas[-2])),
+                       C = 2 ^((1:len) - 3))
+  } else {
+    ## For random search, define ranges for the parameters then
+    ## generate random values for them
+    rng <- extendrange(log(sigmas), f = .75)
+    out <- data.frame(sigma = exp(runif(len, min = rng[1], max = rng[2])),
+                      C = 2^runif(len, min = -5, max = 8))
+  }
+  out
+}
+lpSVM$grid <- svmGrid
+svmFit <- function(x, y, wts, param, lev, last, weights, classProbs, ...) { 
+  kernlab::ksvm(
+    x = as.matrix(x), y = y,
+    kernel = "rbfdot",
+    kpar = list(sigma = param$sigma),
+    C = param$C,
+    prob.model = classProbs,
+    ...
+  )
+}
+
+lpSVM$fit <- svmFit
+svmPred <- function(modelFit, newdata, preProc = NULL, submodels = NULL)
+  kernlab::predict(modelFit, newdata)
+lpSVM$predict <- svmPred
+svmProb <- function(modelFit, newdata, preProc = NULL, submodels = NULL)
+  kernlab::predict(modelFit, newdata, type = "probabilities")
+lpSVM$prob <- svmProb
+svmSort <- function(x) x[order(x$C),]
+lpSVM$sort <- svmSort
+lpSVM$levels <- function(x) kernlab::lev(x)
+```
+
+##### Train SVM model
+
+```{r}
+set.seed(123)
+fitControl <- trainControl(method = "repeatedcv",
+                             ## 10-fold CV...
+                             number = 10,
+                             ## repeated ten times
+                             repeats = 10,
+                             classProbs = TRUE,
+                             summaryFunction = twoClassSummary)
+  
+set.seed(123)
+svmTune <- train(Class ~ ., data = data, 
+                   method = lpSVM, 
+                   preProc = c("center", "scale"),
+                   metric="ROC",
+                   tuneLength = 8,
+                   trControl = fitControl)
+```
+
+##### prediction
+
+```{r}
+pred <- predict(svmTune, data)
+prob <- predict(svmTune, data, type="prob")
+```
+
+##### Confusion matrix
+
+```{r}
+confusionMatrix(pred,data$Class)
+```
+
+##### ROC curve
+
+```{r}
+roc0 <- roc(response = data$Class, 
+              predictor = predict(svmTune, data, type = "prob")[,1], 
+              levels = rev(levels(data$Class)),ci=TRUE)
+
+ciobj <- ci.se(roc0, specificities=seq(0, 1, l=25))
+dat.ci <- data.frame(x = as.numeric(rownames(ciobj)),
+                     lower = ciobj[, 1],
+                     upper = ciobj[, 3])
+
+ROC_discovery_7 <- ROCdata_func(roc0,combined_strings[7])
+
+ROC_discovery_7
+```
+
+##### Test SVM 
+
+###### Which data? {.tabset}
+
+####### sweden
+
+######## load data
+
+```{r}
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-third-heparin.RData")
+dat_Expr_third_heparin <- t(olink)
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-second-sweden.RData")
+dat_Expr_second_sweden <- t(olink)
+
+groups_third_heparin <- samples_third[match(colnames(dat_Expr_third_heparin),samples_third$SampleID),"modifiedType",drop=TRUE]
+groups_second_sweden <- samples_second[match(colnames(dat_Expr_second_sweden),samples_second$SampleID),"modifiedType",drop=TRUE]
+
+dat_Expr <- dat_Expr_third_heparin%>%
+  cbind(dat_Expr_second_sweden)
+groups <- c(groups_third_heparin,groups_second_sweden)
+```
+
+######## make test dataset
+
+```{r}
+sweden_dataset <- t(dat_Expr)%>%as.data.frame()
+sweden_dataset <- sweden_dataset%>%
+  select(moduleGenes)%>%
+  mutate(Class=groups)
+
+sweden_dataset <- sweden_dataset%>%
+  filter(Class%in%c("Active","Latent"))
+  
+sweden_dataset$Class <- factor(sweden_dataset$Class, levels = c("Active","Latent"))
+data_test <- sweden_dataset
+```
+
+######## prediction
+
+```{r}
+pred <- predict(svmTune, data_test)
+prob <- predict(svmTune, data_test, type="prob")
+```
+
+######## Confusion matrix
+
+```{r}
+confusionMatrix(pred,data_test$Class)
+```
+
+######## ROC curve
+
+```{r}
+roc0 <- roc(response = data_test$Class, 
+              predictor = predict(svmTune, data_test, type = "prob")[,1], 
+              levels = rev(levels(data_test$Class)),ci=TRUE)
+
+ciobj <- ci.se(roc0, specificities=seq(0, 1, l=25))
+dat.ci <- data.frame(x = as.numeric(rownames(ciobj)),
+                     lower = ciobj[, 1],
+                     upper = ciobj[, 3])
+
+ROC_sweden_7 <- ROCdata_func(roc0,combined_strings[7])
+
+ROC_sweden_7
+```
+
+
+
+####### italy 
+
+######## load data
+
+```{r}
+l=load("../Data/ReadyData/ReadyData-second-italy.RData")
+dat_Expr <- t(olink)
+groups <- samples_second[match(colnames(dat_Expr),samples_second$SampleID),"modifiedType",drop=TRUE]
+```
+
+######## make test dataset
+
+```{r}
+second_italy_dataset <- t(dat_Expr)%>%as.data.frame()
+second_italy_dataset <- second_italy_dataset%>%
+  select(moduleGenes)%>%
+  mutate(Class=groups)
+
+second_italy_dataset <- second_italy_dataset%>%
+  filter(Class%in%c("Active","Latent"))
+  
+second_italy_dataset$Class <- factor(second_italy_dataset$Class, levels = c("Active","Latent"))
+data_test <- second_italy_dataset
+```
+
+######## prediction
+
+```{r}
+pred <- predict(svmTune, data_test)
+prob <- predict(svmTune, data_test, type="prob")
+```
+
+######## Confusion matrix
+
+```{r}
+confusionMatrix(pred,data_test$Class)
+```
+
+######## ROC curve
+
+```{r}
+roc0 <- roc(response = data_test$Class, 
+              predictor = predict(svmTune, data_test, type = "prob")[,1], 
+              levels = rev(levels(data_test$Class)),ci=TRUE)
+
+ciobj <- ci.se(roc0, specificities=seq(0, 1, l=25))
+dat.ci <- data.frame(x = as.numeric(rownames(ciobj)),
+                     lower = ciobj[, 1],
+                     upper = ciobj[, 3])
+
+ROC_italy_7 <- ROCdata_func(roc0,combined_strings[7])
+
+ROC_italy_7
+```
+
+####### both
+######## load data
+
+```{r}
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-third-heparin.RData")
+dat_Expr_third_heparin <- t(olink)
+# dat_Expr_third_heparin <- dat_Expr_third_heparin[,!colnames(dat_Expr_third_heparin)%in%c("TB0166.0","TB0102","TB0161")]
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-second-sweden.RData")
+dat_Expr_second_sweden <- t(olink)
+# dat_Expr_second_sweden <- dat_Expr_second_sweden[,!colnames(dat_Expr_second_sweden)%in%c("TB0061")]
+
+groups_third_heparin <- samples_third[match(colnames(dat_Expr_third_heparin),samples_third$SampleID),"modifiedType",drop=TRUE]
+groups_second_sweden <- samples_second[match(colnames(dat_Expr_second_sweden),samples_second$SampleID),"modifiedType",drop=TRUE]
+
+dat_Expr <- dat_Expr_third_heparin%>%
+  cbind(dat_Expr_second_sweden)
+groups <- c(groups_third_heparin,groups_second_sweden)
+
+sweden_dataset <- t(dat_Expr)%>%as.data.frame()
+sweden_dataset <- sweden_dataset%>%
+  select(moduleGenes)%>%
+  mutate(Class=groups)
+
+l=load("../Data/ReadyData/ReadyData-second-italy.RData")
+dat_Expr <- t(olink)
+groups <- samples_second[match(colnames(dat_Expr),samples_second$SampleID),"modifiedType",drop=TRUE]
+
+second_italy_dataset <- t(dat_Expr)%>%as.data.frame()
+second_italy_dataset <- second_italy_dataset%>%
+  select(moduleGenes)%>%
+  mutate(Class=groups)
+```
+
+######## make test dataset 
+
+```{r}
+data_test_both <- sweden_dataset%>%
+  rbind(second_italy_dataset)
+
+data_test_both <- data_test_both%>%
+  filter(Class%in%c("Active","Latent"))
+  
+data_test_both$Class <- factor(data_test_both$Class, levels = c("Active","Latent"))
+data_test <- data_test_both
+```
+
+######## prediction
+
+```{r}
+pred <- predict(svmTune, data_test)
+prob <- predict(svmTune, data_test, type="prob")
+```
+
+######## Confusion matrix
+
+```{r}
+confusionMatrix(pred,data_test$Class)
+```
+
+######## ROC curve
+
+```{r}
+roc0 <- roc(response = data_test$Class, 
+              predictor = predict(svmTune, data_test, type = "prob")[,1], 
+              levels = rev(levels(data_test$Class)),ci=TRUE)
+
+ciobj <- ci.se(roc0, specificities=seq(0, 1, l=25))
+dat.ci <- data.frame(x = as.numeric(rownames(ciobj)),
+                     lower = ciobj[, 1],
+                     upper = ciobj[, 3])
+
+ROC_both_7 <- ROCdata_func(roc0,combined_strings[7])
+
+ROC_both_7
+```
+
+
+## 8
+
+### Markers of signature
+
+```{r}
+combined_strings[8]
+```
+
+### Load data 
+
+```{r message=FALSE, warning=FALSE}
+l=load("../Data/ReadyData/AllDatasets-Samples.RData")
+l=load("../Data/ReadyData/ReadyData-discovery.RData")
+dat_Expr <- olink %>%as.data.frame()
+groups <- samples_first[match(row.names(dat_Expr),samples_first$SampleID),"modifiedType",drop=TRUE]
+
+moduleGenes=combinations[,8]
+
+first_dataset <- dat_Expr%>%as.data.frame()
+first_dataset <- first_dataset%>%
+  select(moduleGenes)%>%
+  mutate(Class=groups)
+```
+
+### Which experiment {.tabset} 
+
+#### Active vs Latent
+
+##### Make train data  
+
+```{r}
+first_dataset_filtered <- first_dataset%>%
+  filter(Class%in%c("Active","Latent"))
+
+first_dataset_filtered$Class <- factor(first_dataset_filtered$Class, levels = c("Active","Latent"))
+data <- first_dataset_filtered
+```
+
+##### Build SVM model
+
+```{r}
+set.seed(123)
+#Defining SVM model
+lpSVM <- list(type = "Classification",
+              library = "kernlab",
+              loop = NULL)
+prm <- data.frame(parameter = c("C", "sigma"),
+                  class = rep("numeric", 2),
+                  label = c("Cost", "Sigma"))
+lpSVM$parameters <- prm
+svmGrid <- function(x, y, len = NULL, search = "grid") {
+  library(kernlab)
+  ## This produces low, middle and high values for sigma 
+  ## (i.e. a vector with 3 elements). 
+  sigmas <- kernlab::sigest(as.matrix(x), na.action = na.omit, scaled = TRUE)  
+  ## To use grid search:
+  if(search == "grid") {
+    out <- expand.grid(sigma = mean(as.vector(sigmas[-2])),
+                       C = 2 ^((1:len) - 3))
+  } else {
+    ## For random search, define ranges for the parameters then
+    ## generate random values for them
+    rng <- extendrange(log(sigmas), f = .75)
+    out <- data.frame(sigma = exp(runif(len, min = rng[1], max = rng[2])),
+                      C = 2^runif(len, min = -5, max = 8))
+  }
+  out
+}
+lpSVM$grid <- svmGrid
+svmFit <- function(x, y, wts, param, lev, last, weights, classProbs, ...) { 
+  kernlab::ksvm(
+    x = as.matrix(x), y = y,
+    kernel = "rbfdot",
+    kpar = list(sigma = param$sigma),
+    C = param$C,
+    prob.model = classProbs,
+    ...
+  )
+}
+
+lpSVM$fit <- svmFit
+svmPred <- function(modelFit, newdata, preProc = NULL, submodels = NULL)
+  kernlab::predict(modelFit, newdata)
+lpSVM$predict <- svmPred
+svmProb <- function(modelFit, newdata, preProc = NULL, submodels = NULL)
+  kernlab::predict(modelFit, newdata, type = "probabilities")
+lpSVM$prob <- svmProb
+svmSort <- function(x) x[order(x$C),]
+lpSVM$sort <- svmSort
+lpSVM$levels <- function(x) kernlab::lev(x)
+```
+
+##### Train SVM model
+
+```{r}
+set.seed(123)
+fitControl <- trainControl(method = "repeatedcv",
+                             ## 10-fold CV...
+                             number = 10,
+                             ## repeated ten times
+                             repeats = 10,
+                             classProbs = TRUE,
+                             summaryFunction = twoClassSummary)
+  
+set.seed(123)
+svmTune <- train(Class ~ ., data = data, 
+                   method = lpSVM, 
+                   preProc = c("center", "scale"),
+                   metric="ROC",
+                   tuneLength = 8,
+                   trControl = fitControl)
+```
+
+##### prediction
+
+```{r}
+pred <- predict(svmTune, data)
+prob <- predict(svmTune, data, type="prob")
+```
+
+##### Confusion matrix
+
+```{r}
+confusionMatrix(pred,data$Class)
+```
+
+##### ROC curve
+
+```{r}
+roc0 <- roc(response = data$Class, 
+              predictor = predict(svmTune, data, type = "prob")[,1], 
+              levels = rev(levels(data$Class)),ci=TRUE)
+
+ciobj <- ci.se(roc0, specificities=seq(0, 1, l=25))
+dat.ci <- data.frame(x = as.numeric(rownames(ciobj)),
+                     lower = ciobj[, 1],
+                     upper = ciobj[, 3])
+
+ROC_discovery_8 <- ROCdata_func(roc0,combined_strings[8])
+
+ROC_discovery_8
+```
+
+##### Test SVM 
+
+###### Which data? {.tabset}
+
+####### sweden
+
+######## load data
+
+```{r}
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-third-heparin.RData")
+dat_Expr_third_heparin <- t(olink)
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-second-sweden.RData")
+dat_Expr_second_sweden <- t(olink)
+
+groups_third_heparin <- samples_third[match(colnames(dat_Expr_third_heparin),samples_third$SampleID),"modifiedType",drop=TRUE]
+groups_second_sweden <- samples_second[match(colnames(dat_Expr_second_sweden),samples_second$SampleID),"modifiedType",drop=TRUE]
+
+dat_Expr <- dat_Expr_third_heparin%>%
+  cbind(dat_Expr_second_sweden)
+groups <- c(groups_third_heparin,groups_second_sweden)
+```
+
+######## make test dataset
+
+```{r}
+sweden_dataset <- t(dat_Expr)%>%as.data.frame()
+sweden_dataset <- sweden_dataset%>%
+  select(moduleGenes)%>%
+  mutate(Class=groups)
+
+sweden_dataset <- sweden_dataset%>%
+  filter(Class%in%c("Active","Latent"))
+  
+sweden_dataset$Class <- factor(sweden_dataset$Class, levels = c("Active","Latent"))
+data_test <- sweden_dataset
+```
+
+######## prediction
+
+```{r}
+pred <- predict(svmTune, data_test)
+prob <- predict(svmTune, data_test, type="prob")
+```
+
+######## Confusion matrix
+
+```{r}
+confusionMatrix(pred,data_test$Class)
+```
+
+######## ROC curve
+
+```{r}
+roc0 <- roc(response = data_test$Class, 
+              predictor = predict(svmTune, data_test, type = "prob")[,1], 
+              levels = rev(levels(data_test$Class)),ci=TRUE)
+
+ciobj <- ci.se(roc0, specificities=seq(0, 1, l=25))
+dat.ci <- data.frame(x = as.numeric(rownames(ciobj)),
+                     lower = ciobj[, 1],
+                     upper = ciobj[, 3])
+
+ROC_sweden_8 <- ROCdata_func(roc0,combined_strings[8])
+
+ROC_sweden_8
+```
+
+
+
+####### italy 
+
+######## load data
+
+```{r}
+l=load("../Data/ReadyData/ReadyData-second-italy.RData")
+dat_Expr <- t(olink)
+groups <- samples_second[match(colnames(dat_Expr),samples_second$SampleID),"modifiedType",drop=TRUE]
+```
+
+######## make test dataset
+
+```{r}
+second_italy_dataset <- t(dat_Expr)%>%as.data.frame()
+second_italy_dataset <- second_italy_dataset%>%
+  select(moduleGenes)%>%
+  mutate(Class=groups)
+
+second_italy_dataset <- second_italy_dataset%>%
+  filter(Class%in%c("Active","Latent"))
+  
+second_italy_dataset$Class <- factor(second_italy_dataset$Class, levels = c("Active","Latent"))
+data_test <- second_italy_dataset
+```
+
+######## prediction
+
+```{r}
+pred <- predict(svmTune, data_test)
+prob <- predict(svmTune, data_test, type="prob")
+```
+
+######## Confusion matrix
+
+```{r}
+confusionMatrix(pred,data_test$Class)
+```
+
+######## ROC curve
+
+```{r}
+roc0 <- roc(response = data_test$Class, 
+              predictor = predict(svmTune, data_test, type = "prob")[,1], 
+              levels = rev(levels(data_test$Class)),ci=TRUE)
+
+ciobj <- ci.se(roc0, specificities=seq(0, 1, l=25))
+dat.ci <- data.frame(x = as.numeric(rownames(ciobj)),
+                     lower = ciobj[, 1],
+                     upper = ciobj[, 3])
+
+ROC_italy_8 <- ROCdata_func(roc0,combined_strings[8])
+
+ROC_italy_8
+```
+
+####### both
+######## load data
+
+```{r}
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-third-heparin.RData")
+dat_Expr_third_heparin <- t(olink)
+# dat_Expr_third_heparin <- dat_Expr_third_heparin[,!colnames(dat_Expr_third_heparin)%in%c("TB0166.0","TB0102","TB0161")]
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-second-sweden.RData")
+dat_Expr_second_sweden <- t(olink)
+# dat_Expr_second_sweden <- dat_Expr_second_sweden[,!colnames(dat_Expr_second_sweden)%in%c("TB0061")]
+
+groups_third_heparin <- samples_third[match(colnames(dat_Expr_third_heparin),samples_third$SampleID),"modifiedType",drop=TRUE]
+groups_second_sweden <- samples_second[match(colnames(dat_Expr_second_sweden),samples_second$SampleID),"modifiedType",drop=TRUE]
+
+dat_Expr <- dat_Expr_third_heparin%>%
+  cbind(dat_Expr_second_sweden)
+groups <- c(groups_third_heparin,groups_second_sweden)
+
+sweden_dataset <- t(dat_Expr)%>%as.data.frame()
+sweden_dataset <- sweden_dataset%>%
+  select(moduleGenes)%>%
+  mutate(Class=groups)
+
+l=load("../Data/ReadyData/ReadyData-second-italy.RData")
+dat_Expr <- t(olink)
+groups <- samples_second[match(colnames(dat_Expr),samples_second$SampleID),"modifiedType",drop=TRUE]
+
+second_italy_dataset <- t(dat_Expr)%>%as.data.frame()
+second_italy_dataset <- second_italy_dataset%>%
+  select(moduleGenes)%>%
+  mutate(Class=groups)
+```
+
+######## make test dataset 
+
+```{r}
+data_test_both <- sweden_dataset%>%
+  rbind(second_italy_dataset)
+
+data_test_both <- data_test_both%>%
+  filter(Class%in%c("Active","Latent"))
+  
+data_test_both$Class <- factor(data_test_both$Class, levels = c("Active","Latent"))
+data_test <- data_test_both
+```
+
+######## prediction
+
+```{r}
+pred <- predict(svmTune, data_test)
+prob <- predict(svmTune, data_test, type="prob")
+```
+
+######## Confusion matrix
+
+```{r}
+confusionMatrix(pred,data_test$Class)
+```
+
+######## ROC curve
+
+```{r}
+roc0 <- roc(response = data_test$Class, 
+              predictor = predict(svmTune, data_test, type = "prob")[,1], 
+              levels = rev(levels(data_test$Class)),ci=TRUE)
+
+ciobj <- ci.se(roc0, specificities=seq(0, 1, l=25))
+dat.ci <- data.frame(x = as.numeric(rownames(ciobj)),
+                     lower = ciobj[, 1],
+                     upper = ciobj[, 3])
+
+ROC_both_8 <- ROCdata_func(roc0,combined_strings[8])
+
+ROC_both_8
+```
+
+
+## 9
+
+### Markers of signature
+
+```{r}
+combined_strings[9]
+```
+
+### Load data 
+
+```{r message=FALSE, warning=FALSE}
+l=load("../Data/ReadyData/AllDatasets-Samples.RData")
+l=load("../Data/ReadyData/ReadyData-discovery.RData")
+dat_Expr <- olink %>%as.data.frame()
+groups <- samples_first[match(row.names(dat_Expr),samples_first$SampleID),"modifiedType",drop=TRUE]
+
+moduleGenes=combinations[,9]
+
+first_dataset <- dat_Expr%>%as.data.frame()
+first_dataset <- first_dataset%>%
+  select(moduleGenes)%>%
+  mutate(Class=groups)
+```
+
+### Which experiment {.tabset} 
+
+#### Active vs Latent
+
+##### Make train data  
+
+```{r}
+first_dataset_filtered <- first_dataset%>%
+  filter(Class%in%c("Active","Latent"))
+
+first_dataset_filtered$Class <- factor(first_dataset_filtered$Class, levels = c("Active","Latent"))
+data <- first_dataset_filtered
+```
+
+##### Build SVM model
+
+```{r}
+set.seed(123)
+#Defining SVM model
+lpSVM <- list(type = "Classification",
+              library = "kernlab",
+              loop = NULL)
+prm <- data.frame(parameter = c("C", "sigma"),
+                  class = rep("numeric", 2),
+                  label = c("Cost", "Sigma"))
+lpSVM$parameters <- prm
+svmGrid <- function(x, y, len = NULL, search = "grid") {
+  library(kernlab)
+  ## This produces low, middle and high values for sigma 
+  ## (i.e. a vector with 3 elements). 
+  sigmas <- kernlab::sigest(as.matrix(x), na.action = na.omit, scaled = TRUE)  
+  ## To use grid search:
+  if(search == "grid") {
+    out <- expand.grid(sigma = mean(as.vector(sigmas[-2])),
+                       C = 2 ^((1:len) - 3))
+  } else {
+    ## For random search, define ranges for the parameters then
+    ## generate random values for them
+    rng <- extendrange(log(sigmas), f = .75)
+    out <- data.frame(sigma = exp(runif(len, min = rng[1], max = rng[2])),
+                      C = 2^runif(len, min = -5, max = 8))
+  }
+  out
+}
+lpSVM$grid <- svmGrid
+svmFit <- function(x, y, wts, param, lev, last, weights, classProbs, ...) { 
+  kernlab::ksvm(
+    x = as.matrix(x), y = y,
+    kernel = "rbfdot",
+    kpar = list(sigma = param$sigma),
+    C = param$C,
+    prob.model = classProbs,
+    ...
+  )
+}
+
+lpSVM$fit <- svmFit
+svmPred <- function(modelFit, newdata, preProc = NULL, submodels = NULL)
+  kernlab::predict(modelFit, newdata)
+lpSVM$predict <- svmPred
+svmProb <- function(modelFit, newdata, preProc = NULL, submodels = NULL)
+  kernlab::predict(modelFit, newdata, type = "probabilities")
+lpSVM$prob <- svmProb
+svmSort <- function(x) x[order(x$C),]
+lpSVM$sort <- svmSort
+lpSVM$levels <- function(x) kernlab::lev(x)
+```
+
+##### Train SVM model
+
+```{r}
+set.seed(123)
+fitControl <- trainControl(method = "repeatedcv",
+                             ## 10-fold CV...
+                             number = 10,
+                             ## repeated ten times
+                             repeats = 10,
+                             classProbs = TRUE,
+                             summaryFunction = twoClassSummary)
+  
+set.seed(123)
+svmTune <- train(Class ~ ., data = data, 
+                   method = lpSVM, 
+                   preProc = c("center", "scale"),
+                   metric="ROC",
+                   tuneLength = 8,
+                   trControl = fitControl)
+```
+
+##### prediction
+
+```{r}
+pred <- predict(svmTune, data)
+prob <- predict(svmTune, data, type="prob")
+```
+
+##### Confusion matrix
+
+```{r}
+confusionMatrix(pred,data$Class)
+```
+
+##### ROC curve
+
+```{r}
+roc0 <- roc(response = data$Class, 
+              predictor = predict(svmTune, data, type = "prob")[,1], 
+              levels = rev(levels(data$Class)),ci=TRUE)
+
+ciobj <- ci.se(roc0, specificities=seq(0, 1, l=25))
+dat.ci <- data.frame(x = as.numeric(rownames(ciobj)),
+                     lower = ciobj[, 1],
+                     upper = ciobj[, 3])
+
+ROC_discovery_9 <- ROCdata_func(roc0,combined_strings[9])
+
+ROC_discovery_9
+```
+
+##### Test SVM 
+
+###### Which data? {.tabset}
+
+####### sweden
+
+######## load data
+
+```{r}
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-third-heparin.RData")
+dat_Expr_third_heparin <- t(olink)
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-second-sweden.RData")
+dat_Expr_second_sweden <- t(olink)
+
+groups_third_heparin <- samples_third[match(colnames(dat_Expr_third_heparin),samples_third$SampleID),"modifiedType",drop=TRUE]
+groups_second_sweden <- samples_second[match(colnames(dat_Expr_second_sweden),samples_second$SampleID),"modifiedType",drop=TRUE]
+
+dat_Expr <- dat_Expr_third_heparin%>%
+  cbind(dat_Expr_second_sweden)
+groups <- c(groups_third_heparin,groups_second_sweden)
+```
+
+######## make test dataset
+
+```{r}
+sweden_dataset <- t(dat_Expr)%>%as.data.frame()
+sweden_dataset <- sweden_dataset%>%
+  select(moduleGenes)%>%
+  mutate(Class=groups)
+
+sweden_dataset <- sweden_dataset%>%
+  filter(Class%in%c("Active","Latent"))
+  
+sweden_dataset$Class <- factor(sweden_dataset$Class, levels = c("Active","Latent"))
+data_test <- sweden_dataset
+```
+
+######## prediction
+
+```{r}
+pred <- predict(svmTune, data_test)
+prob <- predict(svmTune, data_test, type="prob")
+```
+
+######## Confusion matrix
+
+```{r}
+confusionMatrix(pred,data_test$Class)
+```
+
+######## ROC curve
+
+```{r}
+roc0 <- roc(response = data_test$Class, 
+              predictor = predict(svmTune, data_test, type = "prob")[,1], 
+              levels = rev(levels(data_test$Class)),ci=TRUE)
+
+ciobj <- ci.se(roc0, specificities=seq(0, 1, l=25))
+dat.ci <- data.frame(x = as.numeric(rownames(ciobj)),
+                     lower = ciobj[, 1],
+                     upper = ciobj[, 3])
+
+ROC_sweden_9 <- ROCdata_func(roc0,combined_strings[9])
+
+ROC_sweden_9
+```
+
+
+
+####### italy 
+
+######## load data
+
+```{r}
+l=load("../Data/ReadyData/ReadyData-second-italy.RData")
+dat_Expr <- t(olink)
+groups <- samples_second[match(colnames(dat_Expr),samples_second$SampleID),"modifiedType",drop=TRUE]
+```
+
+######## make test dataset
+
+```{r}
+second_italy_dataset <- t(dat_Expr)%>%as.data.frame()
+second_italy_dataset <- second_italy_dataset%>%
+  select(moduleGenes)%>%
+  mutate(Class=groups)
+
+second_italy_dataset <- second_italy_dataset%>%
+  filter(Class%in%c("Active","Latent"))
+  
+second_italy_dataset$Class <- factor(second_italy_dataset$Class, levels = c("Active","Latent"))
+data_test <- second_italy_dataset
+```
+
+######## prediction
+
+```{r}
+pred <- predict(svmTune, data_test)
+prob <- predict(svmTune, data_test, type="prob")
+```
+
+######## Confusion matrix
+
+```{r}
+confusionMatrix(pred,data_test$Class)
+```
+
+######## ROC curve
+
+```{r}
+roc0 <- roc(response = data_test$Class, 
+              predictor = predict(svmTune, data_test, type = "prob")[,1], 
+              levels = rev(levels(data_test$Class)),ci=TRUE)
+
+ciobj <- ci.se(roc0, specificities=seq(0, 1, l=25))
+dat.ci <- data.frame(x = as.numeric(rownames(ciobj)),
+                     lower = ciobj[, 1],
+                     upper = ciobj[, 3])
+
+ROC_italy_9 <- ROCdata_func(roc0,combined_strings[9])
+
+ROC_italy_9
+```
+
+####### both
+######## load data
+
+```{r}
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-third-heparin.RData")
+dat_Expr_third_heparin <- t(olink)
+# dat_Expr_third_heparin <- dat_Expr_third_heparin[,!colnames(dat_Expr_third_heparin)%in%c("TB0166.0","TB0102","TB0161")]
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-second-sweden.RData")
+dat_Expr_second_sweden <- t(olink)
+# dat_Expr_second_sweden <- dat_Expr_second_sweden[,!colnames(dat_Expr_second_sweden)%in%c("TB0061")]
+
+groups_third_heparin <- samples_third[match(colnames(dat_Expr_third_heparin),samples_third$SampleID),"modifiedType",drop=TRUE]
+groups_second_sweden <- samples_second[match(colnames(dat_Expr_second_sweden),samples_second$SampleID),"modifiedType",drop=TRUE]
+
+dat_Expr <- dat_Expr_third_heparin%>%
+  cbind(dat_Expr_second_sweden)
+groups <- c(groups_third_heparin,groups_second_sweden)
+
+sweden_dataset <- t(dat_Expr)%>%as.data.frame()
+sweden_dataset <- sweden_dataset%>%
+  select(moduleGenes)%>%
+  mutate(Class=groups)
+
+l=load("../Data/ReadyData/ReadyData-second-italy.RData")
+dat_Expr <- t(olink)
+groups <- samples_second[match(colnames(dat_Expr),samples_second$SampleID),"modifiedType",drop=TRUE]
+
+second_italy_dataset <- t(dat_Expr)%>%as.data.frame()
+second_italy_dataset <- second_italy_dataset%>%
+  select(moduleGenes)%>%
+  mutate(Class=groups)
+```
+
+######## make test dataset 
+
+```{r}
+data_test_both <- sweden_dataset%>%
+  rbind(second_italy_dataset)
+
+data_test_both <- data_test_both%>%
+  filter(Class%in%c("Active","Latent"))
+  
+data_test_both$Class <- factor(data_test_both$Class, levels = c("Active","Latent"))
+data_test <- data_test_both
+```
+
+######## prediction
+
+```{r}
+pred <- predict(svmTune, data_test)
+prob <- predict(svmTune, data_test, type="prob")
+```
+
+######## Confusion matrix
+
+```{r}
+confusionMatrix(pred,data_test$Class)
+```
+
+######## ROC curve
+
+```{r}
+roc0 <- roc(response = data_test$Class, 
+              predictor = predict(svmTune, data_test, type = "prob")[,1], 
+              levels = rev(levels(data_test$Class)),ci=TRUE)
+
+ciobj <- ci.se(roc0, specificities=seq(0, 1, l=25))
+dat.ci <- data.frame(x = as.numeric(rownames(ciobj)),
+                     lower = ciobj[, 1],
+                     upper = ciobj[, 3])
+
+ROC_both_9 <- ROCdata_func(roc0,combined_strings[9])
+
+ROC_both_9
+```
+
+
+## 10
+
+### Markers of signature
+
+```{r}
+combined_strings[10]
+```
+
+### Load data 
+
+```{r message=FALSE, warning=FALSE}
+l=load("../Data/ReadyData/AllDatasets-Samples.RData")
+l=load("../Data/ReadyData/ReadyData-discovery.RData")
+dat_Expr <- olink %>%as.data.frame()
+groups <- samples_first[match(row.names(dat_Expr),samples_first$SampleID),"modifiedType",drop=TRUE]
+
+moduleGenes=combinations[,10]
+
+first_dataset <- dat_Expr%>%as.data.frame()
+first_dataset <- first_dataset%>%
+  select(moduleGenes)%>%
+  mutate(Class=groups)
+```
+
+### Which experiment {.tabset} 
+
+#### Active vs Latent
+
+##### Make train data  
+
+```{r}
+first_dataset_filtered <- first_dataset%>%
+  filter(Class%in%c("Active","Latent"))
+
+first_dataset_filtered$Class <- factor(first_dataset_filtered$Class, levels = c("Active","Latent"))
+data <- first_dataset_filtered
+```
+
+##### Build SVM model
+
+```{r}
+set.seed(123)
+#Defining SVM model
+lpSVM <- list(type = "Classification",
+              library = "kernlab",
+              loop = NULL)
+prm <- data.frame(parameter = c("C", "sigma"),
+                  class = rep("numeric", 2),
+                  label = c("Cost", "Sigma"))
+lpSVM$parameters <- prm
+svmGrid <- function(x, y, len = NULL, search = "grid") {
+  library(kernlab)
+  ## This produces low, middle and high values for sigma 
+  ## (i.e. a vector with 3 elements). 
+  sigmas <- kernlab::sigest(as.matrix(x), na.action = na.omit, scaled = TRUE)  
+  ## To use grid search:
+  if(search == "grid") {
+    out <- expand.grid(sigma = mean(as.vector(sigmas[-2])),
+                       C = 2 ^((1:len) - 3))
+  } else {
+    ## For random search, define ranges for the parameters then
+    ## generate random values for them
+    rng <- extendrange(log(sigmas), f = .75)
+    out <- data.frame(sigma = exp(runif(len, min = rng[1], max = rng[2])),
+                      C = 2^runif(len, min = -5, max = 8))
+  }
+  out
+}
+lpSVM$grid <- svmGrid
+svmFit <- function(x, y, wts, param, lev, last, weights, classProbs, ...) { 
+  kernlab::ksvm(
+    x = as.matrix(x), y = y,
+    kernel = "rbfdot",
+    kpar = list(sigma = param$sigma),
+    C = param$C,
+    prob.model = classProbs,
+    ...
+  )
+}
+
+lpSVM$fit <- svmFit
+svmPred <- function(modelFit, newdata, preProc = NULL, submodels = NULL)
+  kernlab::predict(modelFit, newdata)
+lpSVM$predict <- svmPred
+svmProb <- function(modelFit, newdata, preProc = NULL, submodels = NULL)
+  kernlab::predict(modelFit, newdata, type = "probabilities")
+lpSVM$prob <- svmProb
+svmSort <- function(x) x[order(x$C),]
+lpSVM$sort <- svmSort
+lpSVM$levels <- function(x) kernlab::lev(x)
+```
+
+##### Train SVM model
+
+```{r}
+set.seed(123)
+fitControl <- trainControl(method = "repeatedcv",
+                             ## 10-fold CV...
+                             number = 10,
+                             ## repeated ten times
+                             repeats = 10,
+                             classProbs = TRUE,
+                             summaryFunction = twoClassSummary)
+  
+set.seed(123)
+svmTune <- train(Class ~ ., data = data, 
+                   method = lpSVM, 
+                   preProc = c("center", "scale"),
+                   metric="ROC",
+                   tuneLength = 8,
+                   trControl = fitControl)
+```
+
+##### prediction
+
+```{r}
+pred <- predict(svmTune, data)
+prob <- predict(svmTune, data, type="prob")
+```
+
+##### Confusion matrix
+
+```{r}
+confusionMatrix(pred,data$Class)
+```
+
+##### ROC curve
+
+```{r}
+roc0 <- roc(response = data$Class, 
+              predictor = predict(svmTune, data, type = "prob")[,1], 
+              levels = rev(levels(data$Class)),ci=TRUE)
+
+ciobj <- ci.se(roc0, specificities=seq(0, 1, l=25))
+dat.ci <- data.frame(x = as.numeric(rownames(ciobj)),
+                     lower = ciobj[, 1],
+                     upper = ciobj[, 3])
+
+ROC_discovery_10 <- ROCdata_func(roc0,combined_strings[10])
+
+ROC_discovery_10
+```
+
+##### Test SVM 
+
+###### Which data? {.tabset}
+
+####### sweden
+
+######## load data
+
+```{r}
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-third-heparin.RData")
+dat_Expr_third_heparin <- t(olink)
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-second-sweden.RData")
+dat_Expr_second_sweden <- t(olink)
+
+groups_third_heparin <- samples_third[match(colnames(dat_Expr_third_heparin),samples_third$SampleID),"modifiedType",drop=TRUE]
+groups_second_sweden <- samples_second[match(colnames(dat_Expr_second_sweden),samples_second$SampleID),"modifiedType",drop=TRUE]
+
+dat_Expr <- dat_Expr_third_heparin%>%
+  cbind(dat_Expr_second_sweden)
+groups <- c(groups_third_heparin,groups_second_sweden)
+```
+
+######## make test dataset
+
+```{r}
+sweden_dataset <- t(dat_Expr)%>%as.data.frame()
+sweden_dataset <- sweden_dataset%>%
+  select(moduleGenes)%>%
+  mutate(Class=groups)
+
+sweden_dataset <- sweden_dataset%>%
+  filter(Class%in%c("Active","Latent"))
+  
+sweden_dataset$Class <- factor(sweden_dataset$Class, levels = c("Active","Latent"))
+data_test <- sweden_dataset
+```
+
+######## prediction
+
+```{r}
+pred <- predict(svmTune, data_test)
+prob <- predict(svmTune, data_test, type="prob")
+```
+
+######## Confusion matrix
+
+```{r}
+confusionMatrix(pred,data_test$Class)
+```
+
+######## ROC curve
+
+```{r}
+roc0 <- roc(response = data_test$Class, 
+              predictor = predict(svmTune, data_test, type = "prob")[,1], 
+              levels = rev(levels(data_test$Class)),ci=TRUE)
+
+ciobj <- ci.se(roc0, specificities=seq(0, 1, l=25))
+dat.ci <- data.frame(x = as.numeric(rownames(ciobj)),
+                     lower = ciobj[, 1],
+                     upper = ciobj[, 3])
+
+ROC_sweden_10 <- ROCdata_func(roc0,combined_strings[10])
+
+ROC_sweden_10
+```
+
+
+
+####### italy 
+
+######## load data
+
+```{r}
+l=load("../Data/ReadyData/ReadyData-second-italy.RData")
+dat_Expr <- t(olink)
+groups <- samples_second[match(colnames(dat_Expr),samples_second$SampleID),"modifiedType",drop=TRUE]
+```
+
+######## make test dataset
+
+```{r}
+second_italy_dataset <- t(dat_Expr)%>%as.data.frame()
+second_italy_dataset <- second_italy_dataset%>%
+  select(moduleGenes)%>%
+  mutate(Class=groups)
+
+second_italy_dataset <- second_italy_dataset%>%
+  filter(Class%in%c("Active","Latent"))
+  
+second_italy_dataset$Class <- factor(second_italy_dataset$Class, levels = c("Active","Latent"))
+data_test <- second_italy_dataset
+```
+
+######## prediction
+
+```{r}
+pred <- predict(svmTune, data_test)
+prob <- predict(svmTune, data_test, type="prob")
+```
+
+######## Confusion matrix
+
+```{r}
+confusionMatrix(pred,data_test$Class)
+```
+
+######## ROC curve
+
+```{r}
+roc0 <- roc(response = data_test$Class, 
+              predictor = predict(svmTune, data_test, type = "prob")[,1], 
+              levels = rev(levels(data_test$Class)),ci=TRUE)
+
+ciobj <- ci.se(roc0, specificities=seq(0, 1, l=25))
+dat.ci <- data.frame(x = as.numeric(rownames(ciobj)),
+                     lower = ciobj[, 1],
+                     upper = ciobj[, 3])
+
+ROC_italy_10 <- ROCdata_func(roc0,combined_strings[10])
+
+ROC_italy_10
+```
+
+####### both
+######## load data
+
+```{r}
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-third-heparin.RData")
+dat_Expr_third_heparin <- t(olink)
+# dat_Expr_third_heparin <- dat_Expr_third_heparin[,!colnames(dat_Expr_third_heparin)%in%c("TB0166.0","TB0102","TB0161")]
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-second-sweden.RData")
+dat_Expr_second_sweden <- t(olink)
+# dat_Expr_second_sweden <- dat_Expr_second_sweden[,!colnames(dat_Expr_second_sweden)%in%c("TB0061")]
+
+groups_third_heparin <- samples_third[match(colnames(dat_Expr_third_heparin),samples_third$SampleID),"modifiedType",drop=TRUE]
+groups_second_sweden <- samples_second[match(colnames(dat_Expr_second_sweden),samples_second$SampleID),"modifiedType",drop=TRUE]
+
+dat_Expr <- dat_Expr_third_heparin%>%
+  cbind(dat_Expr_second_sweden)
+groups <- c(groups_third_heparin,groups_second_sweden)
+
+sweden_dataset <- t(dat_Expr)%>%as.data.frame()
+sweden_dataset <- sweden_dataset%>%
+  select(moduleGenes)%>%
+  mutate(Class=groups)
+
+l=load("../Data/ReadyData/ReadyData-second-italy.RData")
+dat_Expr <- t(olink)
+groups <- samples_second[match(colnames(dat_Expr),samples_second$SampleID),"modifiedType",drop=TRUE]
+
+second_italy_dataset <- t(dat_Expr)%>%as.data.frame()
+second_italy_dataset <- second_italy_dataset%>%
+  select(moduleGenes)%>%
+  mutate(Class=groups)
+```
+
+######## make test dataset 
+
+```{r}
+data_test_both <- sweden_dataset%>%
+  rbind(second_italy_dataset)
+
+data_test_both <- data_test_both%>%
+  filter(Class%in%c("Active","Latent"))
+  
+data_test_both$Class <- factor(data_test_both$Class, levels = c("Active","Latent"))
+data_test <- data_test_both
+```
+
+######## prediction
+
+```{r}
+pred <- predict(svmTune, data_test)
+prob <- predict(svmTune, data_test, type="prob")
+```
+
+######## Confusion matrix
+
+```{r}
+confusionMatrix(pred,data_test$Class)
+```
+
+######## ROC curve
+
+```{r}
+roc0 <- roc(response = data_test$Class, 
+              predictor = predict(svmTune, data_test, type = "prob")[,1], 
+              levels = rev(levels(data_test$Class)),ci=TRUE)
+
+ciobj <- ci.se(roc0, specificities=seq(0, 1, l=25))
+dat.ci <- data.frame(x = as.numeric(rownames(ciobj)),
+                     lower = ciobj[, 1],
+                     upper = ciobj[, 3])
+
+ROC_both_10 <- ROCdata_func(roc0,combined_strings[10])
+
+ROC_both_10
+```
+
+
+## 11
+
+### Markers of signature
+
+```{r}
+combined_strings[11]
+```
+
+### Load data 
+
+```{r message=FALSE, warning=FALSE}
+l=load("../Data/ReadyData/AllDatasets-Samples.RData")
+l=load("../Data/ReadyData/ReadyData-discovery.RData")
+dat_Expr <- olink %>%as.data.frame()
+groups <- samples_first[match(row.names(dat_Expr),samples_first$SampleID),"modifiedType",drop=TRUE]
+
+moduleGenes=combinations[,11]
+
+first_dataset <- dat_Expr%>%as.data.frame()
+first_dataset <- first_dataset%>%
+  select(moduleGenes)%>%
+  mutate(Class=groups)
+```
+
+### Which experiment {.tabset} 
+
+#### Active vs Latent
+
+##### Make train data  
+
+```{r}
+first_dataset_filtered <- first_dataset%>%
+  filter(Class%in%c("Active","Latent"))
+
+first_dataset_filtered$Class <- factor(first_dataset_filtered$Class, levels = c("Active","Latent"))
+data <- first_dataset_filtered
+```
+
+##### Build SVM model
+
+```{r}
+set.seed(123)
+#Defining SVM model
+lpSVM <- list(type = "Classification",
+              library = "kernlab",
+              loop = NULL)
+prm <- data.frame(parameter = c("C", "sigma"),
+                  class = rep("numeric", 2),
+                  label = c("Cost", "Sigma"))
+lpSVM$parameters <- prm
+svmGrid <- function(x, y, len = NULL, search = "grid") {
+  library(kernlab)
+  ## This produces low, middle and high values for sigma 
+  ## (i.e. a vector with 3 elements). 
+  sigmas <- kernlab::sigest(as.matrix(x), na.action = na.omit, scaled = TRUE)  
+  ## To use grid search:
+  if(search == "grid") {
+    out <- expand.grid(sigma = mean(as.vector(sigmas[-2])),
+                       C = 2 ^((1:len) - 3))
+  } else {
+    ## For random search, define ranges for the parameters then
+    ## generate random values for them
+    rng <- extendrange(log(sigmas), f = .75)
+    out <- data.frame(sigma = exp(runif(len, min = rng[1], max = rng[2])),
+                      C = 2^runif(len, min = -5, max = 8))
+  }
+  out
+}
+lpSVM$grid <- svmGrid
+svmFit <- function(x, y, wts, param, lev, last, weights, classProbs, ...) { 
+  kernlab::ksvm(
+    x = as.matrix(x), y = y,
+    kernel = "rbfdot",
+    kpar = list(sigma = param$sigma),
+    C = param$C,
+    prob.model = classProbs,
+    ...
+  )
+}
+
+lpSVM$fit <- svmFit
+svmPred <- function(modelFit, newdata, preProc = NULL, submodels = NULL)
+  kernlab::predict(modelFit, newdata)
+lpSVM$predict <- svmPred
+svmProb <- function(modelFit, newdata, preProc = NULL, submodels = NULL)
+  kernlab::predict(modelFit, newdata, type = "probabilities")
+lpSVM$prob <- svmProb
+svmSort <- function(x) x[order(x$C),]
+lpSVM$sort <- svmSort
+lpSVM$levels <- function(x) kernlab::lev(x)
+```
+
+##### Train SVM model
+
+```{r}
+set.seed(123)
+fitControl <- trainControl(method = "repeatedcv",
+                             ## 10-fold CV...
+                             number = 10,
+                             ## repeated ten times
+                             repeats = 10,
+                             classProbs = TRUE,
+                             summaryFunction = twoClassSummary)
+  
+set.seed(123)
+svmTune <- train(Class ~ ., data = data, 
+                   method = lpSVM, 
+                   preProc = c("center", "scale"),
+                   metric="ROC",
+                   tuneLength = 8,
+                   trControl = fitControl)
+```
+
+##### prediction
+
+```{r}
+pred <- predict(svmTune, data)
+prob <- predict(svmTune, data, type="prob")
+```
+
+##### Confusion matrix
+
+```{r}
+confusionMatrix(pred,data$Class)
+```
+
+##### ROC curve
+
+```{r}
+roc0 <- roc(response = data$Class, 
+              predictor = predict(svmTune, data, type = "prob")[,1], 
+              levels = rev(levels(data$Class)),ci=TRUE)
+
+ciobj <- ci.se(roc0, specificities=seq(0, 1, l=25))
+dat.ci <- data.frame(x = as.numeric(rownames(ciobj)),
+                     lower = ciobj[, 1],
+                     upper = ciobj[, 3])
+
+ROC_discovery_11 <- ROCdata_func(roc0,combined_strings[11])
+
+ROC_discovery_11
+```
+
+##### Test SVM 
+
+###### Which data? {.tabset}
+
+####### sweden
+
+######## load data
+
+```{r}
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-third-heparin.RData")
+dat_Expr_third_heparin <- t(olink)
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-second-sweden.RData")
+dat_Expr_second_sweden <- t(olink)
+
+groups_third_heparin <- samples_third[match(colnames(dat_Expr_third_heparin),samples_third$SampleID),"modifiedType",drop=TRUE]
+groups_second_sweden <- samples_second[match(colnames(dat_Expr_second_sweden),samples_second$SampleID),"modifiedType",drop=TRUE]
+
+dat_Expr <- dat_Expr_third_heparin%>%
+  cbind(dat_Expr_second_sweden)
+groups <- c(groups_third_heparin,groups_second_sweden)
+```
+
+######## make test dataset
+
+```{r}
+sweden_dataset <- t(dat_Expr)%>%as.data.frame()
+sweden_dataset <- sweden_dataset%>%
+  select(moduleGenes)%>%
+  mutate(Class=groups)
+
+sweden_dataset <- sweden_dataset%>%
+  filter(Class%in%c("Active","Latent"))
+  
+sweden_dataset$Class <- factor(sweden_dataset$Class, levels = c("Active","Latent"))
+data_test <- sweden_dataset
+```
+
+######## prediction
+
+```{r}
+pred <- predict(svmTune, data_test)
+prob <- predict(svmTune, data_test, type="prob")
+```
+
+######## Confusion matrix
+
+```{r}
+confusionMatrix(pred,data_test$Class)
+```
+
+######## ROC curve
+
+```{r}
+roc0 <- roc(response = data_test$Class, 
+              predictor = predict(svmTune, data_test, type = "prob")[,1], 
+              levels = rev(levels(data_test$Class)),ci=TRUE)
+
+ciobj <- ci.se(roc0, specificities=seq(0, 1, l=25))
+dat.ci <- data.frame(x = as.numeric(rownames(ciobj)),
+                     lower = ciobj[, 1],
+                     upper = ciobj[, 3])
+
+ROC_sweden_11 <- ROCdata_func(roc0,combined_strings[11])
+
+ROC_sweden_11
+```
+
+
+
+####### italy 
+
+######## load data
+
+```{r}
+l=load("../Data/ReadyData/ReadyData-second-italy.RData")
+dat_Expr <- t(olink)
+groups <- samples_second[match(colnames(dat_Expr),samples_second$SampleID),"modifiedType",drop=TRUE]
+```
+
+######## make test dataset
+
+```{r}
+second_italy_dataset <- t(dat_Expr)%>%as.data.frame()
+second_italy_dataset <- second_italy_dataset%>%
+  select(moduleGenes)%>%
+  mutate(Class=groups)
+
+second_italy_dataset <- second_italy_dataset%>%
+  filter(Class%in%c("Active","Latent"))
+  
+second_italy_dataset$Class <- factor(second_italy_dataset$Class, levels = c("Active","Latent"))
+data_test <- second_italy_dataset
+```
+
+######## prediction
+
+```{r}
+pred <- predict(svmTune, data_test)
+prob <- predict(svmTune, data_test, type="prob")
+```
+
+######## Confusion matrix
+
+```{r}
+confusionMatrix(pred,data_test$Class)
+```
+
+######## ROC curve
+
+```{r}
+roc0 <- roc(response = data_test$Class, 
+              predictor = predict(svmTune, data_test, type = "prob")[,1], 
+              levels = rev(levels(data_test$Class)),ci=TRUE)
+
+ciobj <- ci.se(roc0, specificities=seq(0, 1, l=25))
+dat.ci <- data.frame(x = as.numeric(rownames(ciobj)),
+                     lower = ciobj[, 1],
+                     upper = ciobj[, 3])
+
+ROC_italy_11 <- ROCdata_func(roc0,combined_strings[11])
+
+ROC_italy_11
+```
+
+####### both
+######## load data
+
+```{r}
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-third-heparin.RData")
+dat_Expr_third_heparin <- t(olink)
+# dat_Expr_third_heparin <- dat_Expr_third_heparin[,!colnames(dat_Expr_third_heparin)%in%c("TB0166.0","TB0102","TB0161")]
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-second-sweden.RData")
+dat_Expr_second_sweden <- t(olink)
+# dat_Expr_second_sweden <- dat_Expr_second_sweden[,!colnames(dat_Expr_second_sweden)%in%c("TB0061")]
+
+groups_third_heparin <- samples_third[match(colnames(dat_Expr_third_heparin),samples_third$SampleID),"modifiedType",drop=TRUE]
+groups_second_sweden <- samples_second[match(colnames(dat_Expr_second_sweden),samples_second$SampleID),"modifiedType",drop=TRUE]
+
+dat_Expr <- dat_Expr_third_heparin%>%
+  cbind(dat_Expr_second_sweden)
+groups <- c(groups_third_heparin,groups_second_sweden)
+
+sweden_dataset <- t(dat_Expr)%>%as.data.frame()
+sweden_dataset <- sweden_dataset%>%
+  select(moduleGenes)%>%
+  mutate(Class=groups)
+
+l=load("../Data/ReadyData/ReadyData-second-italy.RData")
+dat_Expr <- t(olink)
+groups <- samples_second[match(colnames(dat_Expr),samples_second$SampleID),"modifiedType",drop=TRUE]
+
+second_italy_dataset <- t(dat_Expr)%>%as.data.frame()
+second_italy_dataset <- second_italy_dataset%>%
+  select(moduleGenes)%>%
+  mutate(Class=groups)
+```
+
+######## make test dataset 
+
+```{r}
+data_test_both <- sweden_dataset%>%
+  rbind(second_italy_dataset)
+
+data_test_both <- data_test_both%>%
+  filter(Class%in%c("Active","Latent"))
+  
+data_test_both$Class <- factor(data_test_both$Class, levels = c("Active","Latent"))
+data_test <- data_test_both
+```
+
+######## prediction
+
+```{r}
+pred <- predict(svmTune, data_test)
+prob <- predict(svmTune, data_test, type="prob")
+```
+
+######## Confusion matrix
+
+```{r}
+confusionMatrix(pred,data_test$Class)
+```
+
+######## ROC curve
+
+```{r}
+roc0 <- roc(response = data_test$Class, 
+              predictor = predict(svmTune, data_test, type = "prob")[,1], 
+              levels = rev(levels(data_test$Class)),ci=TRUE)
+
+ciobj <- ci.se(roc0, specificities=seq(0, 1, l=25))
+dat.ci <- data.frame(x = as.numeric(rownames(ciobj)),
+                     lower = ciobj[, 1],
+                     upper = ciobj[, 3])
+
+ROC_both_11 <- ROCdata_func(roc0,combined_strings[11])
+
+ROC_both_11
+```
+
+
+## 12
+
+### Markers of signature
+
+```{r}
+combined_strings[12]
+```
+
+### Load data 
+
+```{r message=FALSE, warning=FALSE}
+l=load("../Data/ReadyData/AllDatasets-Samples.RData")
+l=load("../Data/ReadyData/ReadyData-discovery.RData")
+dat_Expr <- olink %>%as.data.frame()
+groups <- samples_first[match(row.names(dat_Expr),samples_first$SampleID),"modifiedType",drop=TRUE]
+
+moduleGenes=combinations[,12]
+
+first_dataset <- dat_Expr%>%as.data.frame()
+first_dataset <- first_dataset%>%
+  select(moduleGenes)%>%
+  mutate(Class=groups)
+```
+
+### Which experiment {.tabset} 
+
+#### Active vs Latent
+
+##### Make train data  
+
+```{r}
+first_dataset_filtered <- first_dataset%>%
+  filter(Class%in%c("Active","Latent"))
+
+first_dataset_filtered$Class <- factor(first_dataset_filtered$Class, levels = c("Active","Latent"))
+data <- first_dataset_filtered
+```
+
+##### Build SVM model
+
+```{r}
+set.seed(123)
+#Defining SVM model
+lpSVM <- list(type = "Classification",
+              library = "kernlab",
+              loop = NULL)
+prm <- data.frame(parameter = c("C", "sigma"),
+                  class = rep("numeric", 2),
+                  label = c("Cost", "Sigma"))
+lpSVM$parameters <- prm
+svmGrid <- function(x, y, len = NULL, search = "grid") {
+  library(kernlab)
+  ## This produces low, middle and high values for sigma 
+  ## (i.e. a vector with 3 elements). 
+  sigmas <- kernlab::sigest(as.matrix(x), na.action = na.omit, scaled = TRUE)  
+  ## To use grid search:
+  if(search == "grid") {
+    out <- expand.grid(sigma = mean(as.vector(sigmas[-2])),
+                       C = 2 ^((1:len) - 3))
+  } else {
+    ## For random search, define ranges for the parameters then
+    ## generate random values for them
+    rng <- extendrange(log(sigmas), f = .75)
+    out <- data.frame(sigma = exp(runif(len, min = rng[1], max = rng[2])),
+                      C = 2^runif(len, min = -5, max = 8))
+  }
+  out
+}
+lpSVM$grid <- svmGrid
+svmFit <- function(x, y, wts, param, lev, last, weights, classProbs, ...) { 
+  kernlab::ksvm(
+    x = as.matrix(x), y = y,
+    kernel = "rbfdot",
+    kpar = list(sigma = param$sigma),
+    C = param$C,
+    prob.model = classProbs,
+    ...
+  )
+}
+
+lpSVM$fit <- svmFit
+svmPred <- function(modelFit, newdata, preProc = NULL, submodels = NULL)
+  kernlab::predict(modelFit, newdata)
+lpSVM$predict <- svmPred
+svmProb <- function(modelFit, newdata, preProc = NULL, submodels = NULL)
+  kernlab::predict(modelFit, newdata, type = "probabilities")
+lpSVM$prob <- svmProb
+svmSort <- function(x) x[order(x$C),]
+lpSVM$sort <- svmSort
+lpSVM$levels <- function(x) kernlab::lev(x)
+```
+
+##### Train SVM model
+
+```{r}
+set.seed(123)
+fitControl <- trainControl(method = "repeatedcv",
+                             ## 10-fold CV...
+                             number = 10,
+                             ## repeated ten times
+                             repeats = 10,
+                             classProbs = TRUE,
+                             summaryFunction = twoClassSummary)
+  
+set.seed(123)
+svmTune <- train(Class ~ ., data = data, 
+                   method = lpSVM, 
+                   preProc = c("center", "scale"),
+                   metric="ROC",
+                   tuneLength = 8,
+                   trControl = fitControl)
+```
+
+##### prediction
+
+```{r}
+pred <- predict(svmTune, data)
+prob <- predict(svmTune, data, type="prob")
+```
+
+##### Confusion matrix
+
+```{r}
+confusionMatrix(pred,data$Class)
+```
+
+##### ROC curve
+
+```{r}
+roc0 <- roc(response = data$Class, 
+              predictor = predict(svmTune, data, type = "prob")[,1], 
+              levels = rev(levels(data$Class)),ci=TRUE)
+
+ciobj <- ci.se(roc0, specificities=seq(0, 1, l=25))
+dat.ci <- data.frame(x = as.numeric(rownames(ciobj)),
+                     lower = ciobj[, 1],
+                     upper = ciobj[, 3])
+
+ROC_discovery_12 <- ROCdata_func(roc0,combined_strings[12])
+
+ROC_discovery_12
+```
+
+##### Test SVM 
+
+###### Which data? {.tabset}
+
+####### sweden
+
+######## load data
+
+```{r}
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-third-heparin.RData")
+dat_Expr_third_heparin <- t(olink)
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-second-sweden.RData")
+dat_Expr_second_sweden <- t(olink)
+
+groups_third_heparin <- samples_third[match(colnames(dat_Expr_third_heparin),samples_third$SampleID),"modifiedType",drop=TRUE]
+groups_second_sweden <- samples_second[match(colnames(dat_Expr_second_sweden),samples_second$SampleID),"modifiedType",drop=TRUE]
+
+dat_Expr <- dat_Expr_third_heparin%>%
+  cbind(dat_Expr_second_sweden)
+groups <- c(groups_third_heparin,groups_second_sweden)
+```
+
+######## make test dataset
+
+```{r}
+sweden_dataset <- t(dat_Expr)%>%as.data.frame()
+sweden_dataset <- sweden_dataset%>%
+  select(moduleGenes)%>%
+  mutate(Class=groups)
+
+sweden_dataset <- sweden_dataset%>%
+  filter(Class%in%c("Active","Latent"))
+  
+sweden_dataset$Class <- factor(sweden_dataset$Class, levels = c("Active","Latent"))
+data_test <- sweden_dataset
+```
+
+######## prediction
+
+```{r}
+pred <- predict(svmTune, data_test)
+prob <- predict(svmTune, data_test, type="prob")
+```
+
+######## Confusion matrix
+
+```{r}
+confusionMatrix(pred,data_test$Class)
+```
+
+######## ROC curve
+
+```{r}
+roc0 <- roc(response = data_test$Class, 
+              predictor = predict(svmTune, data_test, type = "prob")[,1], 
+              levels = rev(levels(data_test$Class)),ci=TRUE)
+
+ciobj <- ci.se(roc0, specificities=seq(0, 1, l=25))
+dat.ci <- data.frame(x = as.numeric(rownames(ciobj)),
+                     lower = ciobj[, 1],
+                     upper = ciobj[, 3])
+
+ROC_sweden_12 <- ROCdata_func(roc0,combined_strings[12])
+
+ROC_sweden_12
+```
+
+
+
+####### italy 
+
+######## load data
+
+```{r}
+l=load("../Data/ReadyData/ReadyData-second-italy.RData")
+dat_Expr <- t(olink)
+groups <- samples_second[match(colnames(dat_Expr),samples_second$SampleID),"modifiedType",drop=TRUE]
+```
+
+######## make test dataset
+
+```{r}
+second_italy_dataset <- t(dat_Expr)%>%as.data.frame()
+second_italy_dataset <- second_italy_dataset%>%
+  select(moduleGenes)%>%
+  mutate(Class=groups)
+
+second_italy_dataset <- second_italy_dataset%>%
+  filter(Class%in%c("Active","Latent"))
+  
+second_italy_dataset$Class <- factor(second_italy_dataset$Class, levels = c("Active","Latent"))
+data_test <- second_italy_dataset
+```
+
+######## prediction
+
+```{r}
+pred <- predict(svmTune, data_test)
+prob <- predict(svmTune, data_test, type="prob")
+```
+
+######## Confusion matrix
+
+```{r}
+confusionMatrix(pred,data_test$Class)
+```
+
+######## ROC curve
+
+```{r}
+roc0 <- roc(response = data_test$Class, 
+              predictor = predict(svmTune, data_test, type = "prob")[,1], 
+              levels = rev(levels(data_test$Class)),ci=TRUE)
+
+ciobj <- ci.se(roc0, specificities=seq(0, 1, l=25))
+dat.ci <- data.frame(x = as.numeric(rownames(ciobj)),
+                     lower = ciobj[, 1],
+                     upper = ciobj[, 3])
+
+ROC_italy_12 <- ROCdata_func(roc0,combined_strings[12])
+
+ROC_italy_12
+```
+
+####### both
+######## load data
+
+```{r}
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-third-heparin.RData")
+dat_Expr_third_heparin <- t(olink)
+# dat_Expr_third_heparin <- dat_Expr_third_heparin[,!colnames(dat_Expr_third_heparin)%in%c("TB0166.0","TB0102","TB0161")]
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-second-sweden.RData")
+dat_Expr_second_sweden <- t(olink)
+# dat_Expr_second_sweden <- dat_Expr_second_sweden[,!colnames(dat_Expr_second_sweden)%in%c("TB0061")]
+
+groups_third_heparin <- samples_third[match(colnames(dat_Expr_third_heparin),samples_third$SampleID),"modifiedType",drop=TRUE]
+groups_second_sweden <- samples_second[match(colnames(dat_Expr_second_sweden),samples_second$SampleID),"modifiedType",drop=TRUE]
+
+dat_Expr <- dat_Expr_third_heparin%>%
+  cbind(dat_Expr_second_sweden)
+groups <- c(groups_third_heparin,groups_second_sweden)
+
+sweden_dataset <- t(dat_Expr)%>%as.data.frame()
+sweden_dataset <- sweden_dataset%>%
+  select(moduleGenes)%>%
+  mutate(Class=groups)
+
+l=load("../Data/ReadyData/ReadyData-second-italy.RData")
+dat_Expr <- t(olink)
+groups <- samples_second[match(colnames(dat_Expr),samples_second$SampleID),"modifiedType",drop=TRUE]
+
+second_italy_dataset <- t(dat_Expr)%>%as.data.frame()
+second_italy_dataset <- second_italy_dataset%>%
+  select(moduleGenes)%>%
+  mutate(Class=groups)
+```
+
+######## make test dataset 
+
+```{r}
+data_test_both <- sweden_dataset%>%
+  rbind(second_italy_dataset)
+
+data_test_both <- data_test_both%>%
+  filter(Class%in%c("Active","Latent"))
+  
+data_test_both$Class <- factor(data_test_both$Class, levels = c("Active","Latent"))
+data_test <- data_test_both
+```
+
+######## prediction
+
+```{r}
+pred <- predict(svmTune, data_test)
+prob <- predict(svmTune, data_test, type="prob")
+```
+
+######## Confusion matrix
+
+```{r}
+confusionMatrix(pred,data_test$Class)
+```
+
+######## ROC curve
+
+```{r}
+roc0 <- roc(response = data_test$Class, 
+              predictor = predict(svmTune, data_test, type = "prob")[,1], 
+              levels = rev(levels(data_test$Class)),ci=TRUE)
+
+ciobj <- ci.se(roc0, specificities=seq(0, 1, l=25))
+dat.ci <- data.frame(x = as.numeric(rownames(ciobj)),
+                     lower = ciobj[, 1],
+                     upper = ciobj[, 3])
+
+ROC_both_12 <- ROCdata_func(roc0,combined_strings[12])
+
+ROC_both_12
+```
+
+
+## 13
+
+### Markers of signature
+
+```{r}
+combined_strings[13]
+```
+
+### Load data 
+
+```{r message=FALSE, warning=FALSE}
+l=load("../Data/ReadyData/AllDatasets-Samples.RData")
+l=load("../Data/ReadyData/ReadyData-discovery.RData")
+dat_Expr <- olink %>%as.data.frame()
+groups <- samples_first[match(row.names(dat_Expr),samples_first$SampleID),"modifiedType",drop=TRUE]
+
+moduleGenes=combinations[,13]
+
+first_dataset <- dat_Expr%>%as.data.frame()
+first_dataset <- first_dataset%>%
+  select(moduleGenes)%>%
+  mutate(Class=groups)
+```
+
+### Which experiment {.tabset} 
+
+#### Active vs Latent
+
+##### Make train data  
+
+```{r}
+first_dataset_filtered <- first_dataset%>%
+  filter(Class%in%c("Active","Latent"))
+
+first_dataset_filtered$Class <- factor(first_dataset_filtered$Class, levels = c("Active","Latent"))
+data <- first_dataset_filtered
+```
+
+##### Build SVM model
+
+```{r}
+set.seed(123)
+#Defining SVM model
+lpSVM <- list(type = "Classification",
+              library = "kernlab",
+              loop = NULL)
+prm <- data.frame(parameter = c("C", "sigma"),
+                  class = rep("numeric", 2),
+                  label = c("Cost", "Sigma"))
+lpSVM$parameters <- prm
+svmGrid <- function(x, y, len = NULL, search = "grid") {
+  library(kernlab)
+  ## This produces low, middle and high values for sigma 
+  ## (i.e. a vector with 3 elements). 
+  sigmas <- kernlab::sigest(as.matrix(x), na.action = na.omit, scaled = TRUE)  
+  ## To use grid search:
+  if(search == "grid") {
+    out <- expand.grid(sigma = mean(as.vector(sigmas[-2])),
+                       C = 2 ^((1:len) - 3))
+  } else {
+    ## For random search, define ranges for the parameters then
+    ## generate random values for them
+    rng <- extendrange(log(sigmas), f = .75)
+    out <- data.frame(sigma = exp(runif(len, min = rng[1], max = rng[2])),
+                      C = 2^runif(len, min = -5, max = 8))
+  }
+  out
+}
+lpSVM$grid <- svmGrid
+svmFit <- function(x, y, wts, param, lev, last, weights, classProbs, ...) { 
+  kernlab::ksvm(
+    x = as.matrix(x), y = y,
+    kernel = "rbfdot",
+    kpar = list(sigma = param$sigma),
+    C = param$C,
+    prob.model = classProbs,
+    ...
+  )
+}
+
+lpSVM$fit <- svmFit
+svmPred <- function(modelFit, newdata, preProc = NULL, submodels = NULL)
+  kernlab::predict(modelFit, newdata)
+lpSVM$predict <- svmPred
+svmProb <- function(modelFit, newdata, preProc = NULL, submodels = NULL)
+  kernlab::predict(modelFit, newdata, type = "probabilities")
+lpSVM$prob <- svmProb
+svmSort <- function(x) x[order(x$C),]
+lpSVM$sort <- svmSort
+lpSVM$levels <- function(x) kernlab::lev(x)
+```
+
+##### Train SVM model
+
+```{r}
+set.seed(123)
+fitControl <- trainControl(method = "repeatedcv",
+                             ## 10-fold CV...
+                             number = 10,
+                             ## repeated ten times
+                             repeats = 10,
+                             classProbs = TRUE,
+                             summaryFunction = twoClassSummary)
+  
+set.seed(123)
+svmTune <- train(Class ~ ., data = data, 
+                   method = lpSVM, 
+                   preProc = c("center", "scale"),
+                   metric="ROC",
+                   tuneLength = 8,
+                   trControl = fitControl)
+```
+
+##### prediction
+
+```{r}
+pred <- predict(svmTune, data)
+prob <- predict(svmTune, data, type="prob")
+```
+
+##### Confusion matrix
+
+```{r}
+confusionMatrix(pred,data$Class)
+```
+
+##### ROC curve
+
+```{r}
+roc0 <- roc(response = data$Class, 
+              predictor = predict(svmTune, data, type = "prob")[,1], 
+              levels = rev(levels(data$Class)),ci=TRUE)
+
+ciobj <- ci.se(roc0, specificities=seq(0, 1, l=25))
+dat.ci <- data.frame(x = as.numeric(rownames(ciobj)),
+                     lower = ciobj[, 1],
+                     upper = ciobj[, 3])
+
+ROC_discovery_13 <- ROCdata_func(roc0,combined_strings[13])
+
+ROC_discovery_13
+```
+
+##### Test SVM 
+
+###### Which data? {.tabset}
+
+####### sweden
+
+######## load data
+
+```{r}
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-third-heparin.RData")
+dat_Expr_third_heparin <- t(olink)
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-second-sweden.RData")
+dat_Expr_second_sweden <- t(olink)
+
+groups_third_heparin <- samples_third[match(colnames(dat_Expr_third_heparin),samples_third$SampleID),"modifiedType",drop=TRUE]
+groups_second_sweden <- samples_second[match(colnames(dat_Expr_second_sweden),samples_second$SampleID),"modifiedType",drop=TRUE]
+
+dat_Expr <- dat_Expr_third_heparin%>%
+  cbind(dat_Expr_second_sweden)
+groups <- c(groups_third_heparin,groups_second_sweden)
+```
+
+######## make test dataset
+
+```{r}
+sweden_dataset <- t(dat_Expr)%>%as.data.frame()
+sweden_dataset <- sweden_dataset%>%
+  select(moduleGenes)%>%
+  mutate(Class=groups)
+
+sweden_dataset <- sweden_dataset%>%
+  filter(Class%in%c("Active","Latent"))
+  
+sweden_dataset$Class <- factor(sweden_dataset$Class, levels = c("Active","Latent"))
+data_test <- sweden_dataset
+```
+
+######## prediction
+
+```{r}
+pred <- predict(svmTune, data_test)
+prob <- predict(svmTune, data_test, type="prob")
+```
+
+######## Confusion matrix
+
+```{r}
+confusionMatrix(pred,data_test$Class)
+```
+
+######## ROC curve
+
+```{r}
+roc0 <- roc(response = data_test$Class, 
+              predictor = predict(svmTune, data_test, type = "prob")[,1], 
+              levels = rev(levels(data_test$Class)),ci=TRUE)
+
+ciobj <- ci.se(roc0, specificities=seq(0, 1, l=25))
+dat.ci <- data.frame(x = as.numeric(rownames(ciobj)),
+                     lower = ciobj[, 1],
+                     upper = ciobj[, 3])
+
+ROC_sweden_13 <- ROCdata_func(roc0,combined_strings[13])
+
+ROC_sweden_13
+```
+
+
+
+####### italy 
+
+######## load data
+
+```{r}
+l=load("../Data/ReadyData/ReadyData-second-italy.RData")
+dat_Expr <- t(olink)
+groups <- samples_second[match(colnames(dat_Expr),samples_second$SampleID),"modifiedType",drop=TRUE]
+```
+
+######## make test dataset
+
+```{r}
+second_italy_dataset <- t(dat_Expr)%>%as.data.frame()
+second_italy_dataset <- second_italy_dataset%>%
+  select(moduleGenes)%>%
+  mutate(Class=groups)
+
+second_italy_dataset <- second_italy_dataset%>%
+  filter(Class%in%c("Active","Latent"))
+  
+second_italy_dataset$Class <- factor(second_italy_dataset$Class, levels = c("Active","Latent"))
+data_test <- second_italy_dataset
+```
+
+######## prediction
+
+```{r}
+pred <- predict(svmTune, data_test)
+prob <- predict(svmTune, data_test, type="prob")
+```
+
+######## Confusion matrix
+
+```{r}
+confusionMatrix(pred,data_test$Class)
+```
+
+######## ROC curve
+
+```{r}
+roc0 <- roc(response = data_test$Class, 
+              predictor = predict(svmTune, data_test, type = "prob")[,1], 
+              levels = rev(levels(data_test$Class)),ci=TRUE)
+
+ciobj <- ci.se(roc0, specificities=seq(0, 1, l=25))
+dat.ci <- data.frame(x = as.numeric(rownames(ciobj)),
+                     lower = ciobj[, 1],
+                     upper = ciobj[, 3])
+
+ROC_italy_13 <- ROCdata_func(roc0,combined_strings[13])
+
+ROC_italy_13
+```
+
+####### both
+######## load data
+
+```{r}
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-third-heparin.RData")
+dat_Expr_third_heparin <- t(olink)
+# dat_Expr_third_heparin <- dat_Expr_third_heparin[,!colnames(dat_Expr_third_heparin)%in%c("TB0166.0","TB0102","TB0161")]
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-second-sweden.RData")
+dat_Expr_second_sweden <- t(olink)
+# dat_Expr_second_sweden <- dat_Expr_second_sweden[,!colnames(dat_Expr_second_sweden)%in%c("TB0061")]
+
+groups_third_heparin <- samples_third[match(colnames(dat_Expr_third_heparin),samples_third$SampleID),"modifiedType",drop=TRUE]
+groups_second_sweden <- samples_second[match(colnames(dat_Expr_second_sweden),samples_second$SampleID),"modifiedType",drop=TRUE]
+
+dat_Expr <- dat_Expr_third_heparin%>%
+  cbind(dat_Expr_second_sweden)
+groups <- c(groups_third_heparin,groups_second_sweden)
+
+sweden_dataset <- t(dat_Expr)%>%as.data.frame()
+sweden_dataset <- sweden_dataset%>%
+  select(moduleGenes)%>%
+  mutate(Class=groups)
+
+l=load("../Data/ReadyData/ReadyData-second-italy.RData")
+dat_Expr <- t(olink)
+groups <- samples_second[match(colnames(dat_Expr),samples_second$SampleID),"modifiedType",drop=TRUE]
+
+second_italy_dataset <- t(dat_Expr)%>%as.data.frame()
+second_italy_dataset <- second_italy_dataset%>%
+  select(moduleGenes)%>%
+  mutate(Class=groups)
+```
+
+######## make test dataset 
+
+```{r}
+data_test_both <- sweden_dataset%>%
+  rbind(second_italy_dataset)
+
+data_test_both <- data_test_both%>%
+  filter(Class%in%c("Active","Latent"))
+  
+data_test_both$Class <- factor(data_test_both$Class, levels = c("Active","Latent"))
+data_test <- data_test_both
+```
+
+######## prediction
+
+```{r}
+pred <- predict(svmTune, data_test)
+prob <- predict(svmTune, data_test, type="prob")
+```
+
+######## Confusion matrix
+
+```{r}
+confusionMatrix(pred,data_test$Class)
+```
+
+######## ROC curve
+
+```{r}
+roc0 <- roc(response = data_test$Class, 
+              predictor = predict(svmTune, data_test, type = "prob")[,1], 
+              levels = rev(levels(data_test$Class)),ci=TRUE)
+
+ciobj <- ci.se(roc0, specificities=seq(0, 1, l=25))
+dat.ci <- data.frame(x = as.numeric(rownames(ciobj)),
+                     lower = ciobj[, 1],
+                     upper = ciobj[, 3])
+
+ROC_both_13 <- ROCdata_func(roc0,combined_strings[13])
+
+ROC_both_13
+```
+
+
+## 14
+
+### Markers of signature
+
+```{r}
+combined_strings[14]
+```
+
+### Load data 
+
+```{r message=FALSE, warning=FALSE}
+l=load("../Data/ReadyData/AllDatasets-Samples.RData")
+l=load("../Data/ReadyData/ReadyData-discovery.RData")
+dat_Expr <- olink %>%as.data.frame()
+groups <- samples_first[match(row.names(dat_Expr),samples_first$SampleID),"modifiedType",drop=TRUE]
+
+moduleGenes=combinations[,14]
+
+first_dataset <- dat_Expr%>%as.data.frame()
+first_dataset <- first_dataset%>%
+  select(moduleGenes)%>%
+  mutate(Class=groups)
+```
+
+### Which experiment {.tabset} 
+
+#### Active vs Latent
+
+##### Make train data  
+
+```{r}
+first_dataset_filtered <- first_dataset%>%
+  filter(Class%in%c("Active","Latent"))
+
+first_dataset_filtered$Class <- factor(first_dataset_filtered$Class, levels = c("Active","Latent"))
+data <- first_dataset_filtered
+```
+
+##### Build SVM model
+
+```{r}
+set.seed(123)
+#Defining SVM model
+lpSVM <- list(type = "Classification",
+              library = "kernlab",
+              loop = NULL)
+prm <- data.frame(parameter = c("C", "sigma"),
+                  class = rep("numeric", 2),
+                  label = c("Cost", "Sigma"))
+lpSVM$parameters <- prm
+svmGrid <- function(x, y, len = NULL, search = "grid") {
+  library(kernlab)
+  ## This produces low, middle and high values for sigma 
+  ## (i.e. a vector with 3 elements). 
+  sigmas <- kernlab::sigest(as.matrix(x), na.action = na.omit, scaled = TRUE)  
+  ## To use grid search:
+  if(search == "grid") {
+    out <- expand.grid(sigma = mean(as.vector(sigmas[-2])),
+                       C = 2 ^((1:len) - 3))
+  } else {
+    ## For random search, define ranges for the parameters then
+    ## generate random values for them
+    rng <- extendrange(log(sigmas), f = .75)
+    out <- data.frame(sigma = exp(runif(len, min = rng[1], max = rng[2])),
+                      C = 2^runif(len, min = -5, max = 8))
+  }
+  out
+}
+lpSVM$grid <- svmGrid
+svmFit <- function(x, y, wts, param, lev, last, weights, classProbs, ...) { 
+  kernlab::ksvm(
+    x = as.matrix(x), y = y,
+    kernel = "rbfdot",
+    kpar = list(sigma = param$sigma),
+    C = param$C,
+    prob.model = classProbs,
+    ...
+  )
+}
+
+lpSVM$fit <- svmFit
+svmPred <- function(modelFit, newdata, preProc = NULL, submodels = NULL)
+  kernlab::predict(modelFit, newdata)
+lpSVM$predict <- svmPred
+svmProb <- function(modelFit, newdata, preProc = NULL, submodels = NULL)
+  kernlab::predict(modelFit, newdata, type = "probabilities")
+lpSVM$prob <- svmProb
+svmSort <- function(x) x[order(x$C),]
+lpSVM$sort <- svmSort
+lpSVM$levels <- function(x) kernlab::lev(x)
+```
+
+##### Train SVM model
+
+```{r}
+set.seed(123)
+fitControl <- trainControl(method = "repeatedcv",
+                             ## 10-fold CV...
+                             number = 10,
+                             ## repeated ten times
+                             repeats = 10,
+                             classProbs = TRUE,
+                             summaryFunction = twoClassSummary)
+  
+set.seed(123)
+svmTune <- train(Class ~ ., data = data, 
+                   method = lpSVM, 
+                   preProc = c("center", "scale"),
+                   metric="ROC",
+                   tuneLength = 8,
+                   trControl = fitControl)
+```
+
+##### prediction
+
+```{r}
+pred <- predict(svmTune, data)
+prob <- predict(svmTune, data, type="prob")
+```
+
+##### Confusion matrix
+
+```{r}
+confusionMatrix(pred,data$Class)
+```
+
+##### ROC curve
+
+```{r}
+roc0 <- roc(response = data$Class, 
+              predictor = predict(svmTune, data, type = "prob")[,1], 
+              levels = rev(levels(data$Class)),ci=TRUE)
+
+ciobj <- ci.se(roc0, specificities=seq(0, 1, l=25))
+dat.ci <- data.frame(x = as.numeric(rownames(ciobj)),
+                     lower = ciobj[, 1],
+                     upper = ciobj[, 3])
+
+ROC_discovery_14 <- ROCdata_func(roc0,combined_strings[14])
+
+ROC_discovery_14
+```
+
+##### Test SVM 
+
+###### Which data? {.tabset}
+
+####### sweden
+
+######## load data
+
+```{r}
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-third-heparin.RData")
+dat_Expr_third_heparin <- t(olink)
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-second-sweden.RData")
+dat_Expr_second_sweden <- t(olink)
+
+groups_third_heparin <- samples_third[match(colnames(dat_Expr_third_heparin),samples_third$SampleID),"modifiedType",drop=TRUE]
+groups_second_sweden <- samples_second[match(colnames(dat_Expr_second_sweden),samples_second$SampleID),"modifiedType",drop=TRUE]
+
+dat_Expr <- dat_Expr_third_heparin%>%
+  cbind(dat_Expr_second_sweden)
+groups <- c(groups_third_heparin,groups_second_sweden)
+```
+
+######## make test dataset
+
+```{r}
+sweden_dataset <- t(dat_Expr)%>%as.data.frame()
+sweden_dataset <- sweden_dataset%>%
+  select(moduleGenes)%>%
+  mutate(Class=groups)
+
+sweden_dataset <- sweden_dataset%>%
+  filter(Class%in%c("Active","Latent"))
+  
+sweden_dataset$Class <- factor(sweden_dataset$Class, levels = c("Active","Latent"))
+data_test <- sweden_dataset
+```
+
+######## prediction
+
+```{r}
+pred <- predict(svmTune, data_test)
+prob <- predict(svmTune, data_test, type="prob")
+```
+
+######## Confusion matrix
+
+```{r}
+confusionMatrix(pred,data_test$Class)
+```
+
+######## ROC curve
+
+```{r}
+roc0 <- roc(response = data_test$Class, 
+              predictor = predict(svmTune, data_test, type = "prob")[,1], 
+              levels = rev(levels(data_test$Class)),ci=TRUE)
+
+ciobj <- ci.se(roc0, specificities=seq(0, 1, l=25))
+dat.ci <- data.frame(x = as.numeric(rownames(ciobj)),
+                     lower = ciobj[, 1],
+                     upper = ciobj[, 3])
+
+ROC_sweden_14 <- ROCdata_func(roc0,combined_strings[14])
+
+ROC_sweden_14
+```
+
+
+
+####### italy 
+
+######## load data
+
+```{r}
+l=load("../Data/ReadyData/ReadyData-second-italy.RData")
+dat_Expr <- t(olink)
+groups <- samples_second[match(colnames(dat_Expr),samples_second$SampleID),"modifiedType",drop=TRUE]
+```
+
+######## make test dataset
+
+```{r}
+second_italy_dataset <- t(dat_Expr)%>%as.data.frame()
+second_italy_dataset <- second_italy_dataset%>%
+  select(moduleGenes)%>%
+  mutate(Class=groups)
+
+second_italy_dataset <- second_italy_dataset%>%
+  filter(Class%in%c("Active","Latent"))
+  
+second_italy_dataset$Class <- factor(second_italy_dataset$Class, levels = c("Active","Latent"))
+data_test <- second_italy_dataset
+```
+
+######## prediction
+
+```{r}
+pred <- predict(svmTune, data_test)
+prob <- predict(svmTune, data_test, type="prob")
+```
+
+######## Confusion matrix
+
+```{r}
+confusionMatrix(pred,data_test$Class)
+```
+
+######## ROC curve
+
+```{r}
+roc0 <- roc(response = data_test$Class, 
+              predictor = predict(svmTune, data_test, type = "prob")[,1], 
+              levels = rev(levels(data_test$Class)),ci=TRUE)
+
+ciobj <- ci.se(roc0, specificities=seq(0, 1, l=25))
+dat.ci <- data.frame(x = as.numeric(rownames(ciobj)),
+                     lower = ciobj[, 1],
+                     upper = ciobj[, 3])
+
+ROC_italy_14 <- ROCdata_func(roc0,combined_strings[14])
+
+ROC_italy_14
+```
+
+####### both
+######## load data
+
+```{r}
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-third-heparin.RData")
+dat_Expr_third_heparin <- t(olink)
+# dat_Expr_third_heparin <- dat_Expr_third_heparin[,!colnames(dat_Expr_third_heparin)%in%c("TB0166.0","TB0102","TB0161")]
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-second-sweden.RData")
+dat_Expr_second_sweden <- t(olink)
+# dat_Expr_second_sweden <- dat_Expr_second_sweden[,!colnames(dat_Expr_second_sweden)%in%c("TB0061")]
+
+groups_third_heparin <- samples_third[match(colnames(dat_Expr_third_heparin),samples_third$SampleID),"modifiedType",drop=TRUE]
+groups_second_sweden <- samples_second[match(colnames(dat_Expr_second_sweden),samples_second$SampleID),"modifiedType",drop=TRUE]
+
+dat_Expr <- dat_Expr_third_heparin%>%
+  cbind(dat_Expr_second_sweden)
+groups <- c(groups_third_heparin,groups_second_sweden)
+
+sweden_dataset <- t(dat_Expr)%>%as.data.frame()
+sweden_dataset <- sweden_dataset%>%
+  select(moduleGenes)%>%
+  mutate(Class=groups)
+
+l=load("../Data/ReadyData/ReadyData-second-italy.RData")
+dat_Expr <- t(olink)
+groups <- samples_second[match(colnames(dat_Expr),samples_second$SampleID),"modifiedType",drop=TRUE]
+
+second_italy_dataset <- t(dat_Expr)%>%as.data.frame()
+second_italy_dataset <- second_italy_dataset%>%
+  select(moduleGenes)%>%
+  mutate(Class=groups)
+```
+
+######## make test dataset 
+
+```{r}
+data_test_both <- sweden_dataset%>%
+  rbind(second_italy_dataset)
+
+data_test_both <- data_test_both%>%
+  filter(Class%in%c("Active","Latent"))
+  
+data_test_both$Class <- factor(data_test_both$Class, levels = c("Active","Latent"))
+data_test <- data_test_both
+```
+
+######## prediction
+
+```{r}
+pred <- predict(svmTune, data_test)
+prob <- predict(svmTune, data_test, type="prob")
+```
+
+######## Confusion matrix
+
+```{r}
+confusionMatrix(pred,data_test$Class)
+```
+
+######## ROC curve
+
+```{r}
+roc0 <- roc(response = data_test$Class, 
+              predictor = predict(svmTune, data_test, type = "prob")[,1], 
+              levels = rev(levels(data_test$Class)),ci=TRUE)
+
+ciobj <- ci.se(roc0, specificities=seq(0, 1, l=25))
+dat.ci <- data.frame(x = as.numeric(rownames(ciobj)),
+                     lower = ciobj[, 1],
+                     upper = ciobj[, 3])
+
+ROC_both_14 <- ROCdata_func(roc0,combined_strings[14])
+
+ROC_both_14
+```
+
+
+## 15
+
+### Markers of signature
+
+```{r}
+combined_strings[15]
+```
+
+### Load data 
+
+```{r message=FALSE, warning=FALSE}
+l=load("../Data/ReadyData/AllDatasets-Samples.RData")
+l=load("../Data/ReadyData/ReadyData-discovery.RData")
+dat_Expr <- olink %>%as.data.frame()
+groups <- samples_first[match(row.names(dat_Expr),samples_first$SampleID),"modifiedType",drop=TRUE]
+
+moduleGenes=combinations[,15]
+
+first_dataset <- dat_Expr%>%as.data.frame()
+first_dataset <- first_dataset%>%
+  select(moduleGenes)%>%
+  mutate(Class=groups)
+```
+
+### Which experiment {.tabset} 
+
+#### Active vs Latent
+
+##### Make train data  
+
+```{r}
+first_dataset_filtered <- first_dataset%>%
+  filter(Class%in%c("Active","Latent"))
+
+first_dataset_filtered$Class <- factor(first_dataset_filtered$Class, levels = c("Active","Latent"))
+data <- first_dataset_filtered
+```
+
+##### Build SVM model
+
+```{r}
+set.seed(123)
+#Defining SVM model
+lpSVM <- list(type = "Classification",
+              library = "kernlab",
+              loop = NULL)
+prm <- data.frame(parameter = c("C", "sigma"),
+                  class = rep("numeric", 2),
+                  label = c("Cost", "Sigma"))
+lpSVM$parameters <- prm
+svmGrid <- function(x, y, len = NULL, search = "grid") {
+  library(kernlab)
+  ## This produces low, middle and high values for sigma 
+  ## (i.e. a vector with 3 elements). 
+  sigmas <- kernlab::sigest(as.matrix(x), na.action = na.omit, scaled = TRUE)  
+  ## To use grid search:
+  if(search == "grid") {
+    out <- expand.grid(sigma = mean(as.vector(sigmas[-2])),
+                       C = 2 ^((1:len) - 3))
+  } else {
+    ## For random search, define ranges for the parameters then
+    ## generate random values for them
+    rng <- extendrange(log(sigmas), f = .75)
+    out <- data.frame(sigma = exp(runif(len, min = rng[1], max = rng[2])),
+                      C = 2^runif(len, min = -5, max = 8))
+  }
+  out
+}
+lpSVM$grid <- svmGrid
+svmFit <- function(x, y, wts, param, lev, last, weights, classProbs, ...) { 
+  kernlab::ksvm(
+    x = as.matrix(x), y = y,
+    kernel = "rbfdot",
+    kpar = list(sigma = param$sigma),
+    C = param$C,
+    prob.model = classProbs,
+    ...
+  )
+}
+
+lpSVM$fit <- svmFit
+svmPred <- function(modelFit, newdata, preProc = NULL, submodels = NULL)
+  kernlab::predict(modelFit, newdata)
+lpSVM$predict <- svmPred
+svmProb <- function(modelFit, newdata, preProc = NULL, submodels = NULL)
+  kernlab::predict(modelFit, newdata, type = "probabilities")
+lpSVM$prob <- svmProb
+svmSort <- function(x) x[order(x$C),]
+lpSVM$sort <- svmSort
+lpSVM$levels <- function(x) kernlab::lev(x)
+```
+
+##### Train SVM model
+
+```{r}
+set.seed(123)
+fitControl <- trainControl(method = "repeatedcv",
+                             ## 10-fold CV...
+                             number = 10,
+                             ## repeated ten times
+                             repeats = 10,
+                             classProbs = TRUE,
+                             summaryFunction = twoClassSummary)
+  
+set.seed(123)
+svmTune <- train(Class ~ ., data = data, 
+                   method = lpSVM, 
+                   preProc = c("center", "scale"),
+                   metric="ROC",
+                   tuneLength = 8,
+                   trControl = fitControl)
+```
+
+##### prediction
+
+```{r}
+pred <- predict(svmTune, data)
+prob <- predict(svmTune, data, type="prob")
+```
+
+##### Confusion matrix
+
+```{r}
+confusionMatrix(pred,data$Class)
+```
+
+##### ROC curve
+
+```{r}
+roc0 <- roc(response = data$Class, 
+              predictor = predict(svmTune, data, type = "prob")[,1], 
+              levels = rev(levels(data$Class)),ci=TRUE)
+
+ciobj <- ci.se(roc0, specificities=seq(0, 1, l=25))
+dat.ci <- data.frame(x = as.numeric(rownames(ciobj)),
+                     lower = ciobj[, 1],
+                     upper = ciobj[, 3])
+
+ROC_discovery_15 <- ROCdata_func(roc0,combined_strings[15])
+
+ROC_discovery_15
+```
+
+##### Test SVM 
+
+###### Which data? {.tabset}
+
+####### sweden
+
+######## load data
+
+```{r}
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-third-heparin.RData")
+dat_Expr_third_heparin <- t(olink)
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-second-sweden.RData")
+dat_Expr_second_sweden <- t(olink)
+
+groups_third_heparin <- samples_third[match(colnames(dat_Expr_third_heparin),samples_third$SampleID),"modifiedType",drop=TRUE]
+groups_second_sweden <- samples_second[match(colnames(dat_Expr_second_sweden),samples_second$SampleID),"modifiedType",drop=TRUE]
+
+dat_Expr <- dat_Expr_third_heparin%>%
+  cbind(dat_Expr_second_sweden)
+groups <- c(groups_third_heparin,groups_second_sweden)
+```
+
+######## make test dataset
+
+```{r}
+sweden_dataset <- t(dat_Expr)%>%as.data.frame()
+sweden_dataset <- sweden_dataset%>%
+  select(moduleGenes)%>%
+  mutate(Class=groups)
+
+sweden_dataset <- sweden_dataset%>%
+  filter(Class%in%c("Active","Latent"))
+  
+sweden_dataset$Class <- factor(sweden_dataset$Class, levels = c("Active","Latent"))
+data_test <- sweden_dataset
+```
+
+######## prediction
+
+```{r}
+pred <- predict(svmTune, data_test)
+prob <- predict(svmTune, data_test, type="prob")
+```
+
+######## Confusion matrix
+
+```{r}
+confusionMatrix(pred,data_test$Class)
+```
+
+######## ROC curve
+
+```{r}
+roc0 <- roc(response = data_test$Class, 
+              predictor = predict(svmTune, data_test, type = "prob")[,1], 
+              levels = rev(levels(data_test$Class)),ci=TRUE)
+
+ciobj <- ci.se(roc0, specificities=seq(0, 1, l=25))
+dat.ci <- data.frame(x = as.numeric(rownames(ciobj)),
+                     lower = ciobj[, 1],
+                     upper = ciobj[, 3])
+
+ROC_sweden_15 <- ROCdata_func(roc0,combined_strings[15])
+
+ROC_sweden_15
+```
+
+
+
+####### italy 
+
+######## load data
+
+```{r}
+l=load("../Data/ReadyData/ReadyData-second-italy.RData")
+dat_Expr <- t(olink)
+groups <- samples_second[match(colnames(dat_Expr),samples_second$SampleID),"modifiedType",drop=TRUE]
+```
+
+######## make test dataset
+
+```{r}
+second_italy_dataset <- t(dat_Expr)%>%as.data.frame()
+second_italy_dataset <- second_italy_dataset%>%
+  select(moduleGenes)%>%
+  mutate(Class=groups)
+
+second_italy_dataset <- second_italy_dataset%>%
+  filter(Class%in%c("Active","Latent"))
+  
+second_italy_dataset$Class <- factor(second_italy_dataset$Class, levels = c("Active","Latent"))
+data_test <- second_italy_dataset
+```
+
+######## prediction
+
+```{r}
+pred <- predict(svmTune, data_test)
+prob <- predict(svmTune, data_test, type="prob")
+```
+
+######## Confusion matrix
+
+```{r}
+confusionMatrix(pred,data_test$Class)
+```
+
+######## ROC curve
+
+```{r}
+roc0 <- roc(response = data_test$Class, 
+              predictor = predict(svmTune, data_test, type = "prob")[,1], 
+              levels = rev(levels(data_test$Class)),ci=TRUE)
+
+ciobj <- ci.se(roc0, specificities=seq(0, 1, l=25))
+dat.ci <- data.frame(x = as.numeric(rownames(ciobj)),
+                     lower = ciobj[, 1],
+                     upper = ciobj[, 3])
+
+ROC_italy_15 <- ROCdata_func(roc0,combined_strings[15])
+
+ROC_italy_15
+```
+
+####### both
+######## load data
+
+```{r}
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-third-heparin.RData")
+dat_Expr_third_heparin <- t(olink)
+# dat_Expr_third_heparin <- dat_Expr_third_heparin[,!colnames(dat_Expr_third_heparin)%in%c("TB0166.0","TB0102","TB0161")]
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-second-sweden.RData")
+dat_Expr_second_sweden <- t(olink)
+# dat_Expr_second_sweden <- dat_Expr_second_sweden[,!colnames(dat_Expr_second_sweden)%in%c("TB0061")]
+
+groups_third_heparin <- samples_third[match(colnames(dat_Expr_third_heparin),samples_third$SampleID),"modifiedType",drop=TRUE]
+groups_second_sweden <- samples_second[match(colnames(dat_Expr_second_sweden),samples_second$SampleID),"modifiedType",drop=TRUE]
+
+dat_Expr <- dat_Expr_third_heparin%>%
+  cbind(dat_Expr_second_sweden)
+groups <- c(groups_third_heparin,groups_second_sweden)
+
+sweden_dataset <- t(dat_Expr)%>%as.data.frame()
+sweden_dataset <- sweden_dataset%>%
+  select(moduleGenes)%>%
+  mutate(Class=groups)
+
+l=load("../Data/ReadyData/ReadyData-second-italy.RData")
+dat_Expr <- t(olink)
+groups <- samples_second[match(colnames(dat_Expr),samples_second$SampleID),"modifiedType",drop=TRUE]
+
+second_italy_dataset <- t(dat_Expr)%>%as.data.frame()
+second_italy_dataset <- second_italy_dataset%>%
+  select(moduleGenes)%>%
+  mutate(Class=groups)
+```
+
+######## make test dataset 
+
+```{r}
+data_test_both <- sweden_dataset%>%
+  rbind(second_italy_dataset)
+
+data_test_both <- data_test_both%>%
+  filter(Class%in%c("Active","Latent"))
+  
+data_test_both$Class <- factor(data_test_both$Class, levels = c("Active","Latent"))
+data_test <- data_test_both
+```
+
+######## prediction
+
+```{r}
+pred <- predict(svmTune, data_test)
+prob <- predict(svmTune, data_test, type="prob")
+```
+
+######## Confusion matrix
+
+```{r}
+confusionMatrix(pred,data_test$Class)
+```
+
+######## ROC curve
+
+```{r}
+roc0 <- roc(response = data_test$Class, 
+              predictor = predict(svmTune, data_test, type = "prob")[,1], 
+              levels = rev(levels(data_test$Class)),ci=TRUE)
+
+ciobj <- ci.se(roc0, specificities=seq(0, 1, l=25))
+dat.ci <- data.frame(x = as.numeric(rownames(ciobj)),
+                     lower = ciobj[, 1],
+                     upper = ciobj[, 3])
+
+ROC_both_15 <- ROCdata_func(roc0,combined_strings[15])
+
+ROC_both_15
+```
+
+
+# Combine plots
+```{r}
+# Combine ROC data into a single data frame
+combined_roc_discovery_data <- rbind(ROC_discovery_1, ROC_discovery_2,ROC_discovery_3,ROC_discovery_4,ROC_discovery_5, ROC_discovery_6,ROC_discovery_7,ROC_discovery_8,ROC_discovery_9, ROC_discovery_11,ROC_discovery_12,ROC_discovery_13,ROC_discovery_14, ROC_discovery_15)
+combined_plot_discovery_4marker <- ROCplot_func(combined_roc_discovery_data,"specificity","sensitivity","model","Discovery")
+
+combined_roc_sweden_data <- rbind(ROC_sweden_1, ROC_sweden_2,ROC_sweden_3,ROC_sweden_4,ROC_sweden_5,ROC_sweden_6,ROC_sweden_7,ROC_sweden_8,ROC_sweden_9,ROC_sweden_10,ROC_sweden_11,ROC_sweden_12,ROC_sweden_13,ROC_sweden_14,ROC_sweden_15)
+combined_plot_sweden_4marker <- ROCplot_func(combined_roc_sweden_data,"specificity","sensitivity","model","Sweden")
+
+combined_roc_italy_data <- rbind(ROC_italy_1, ROC_italy_2,ROC_italy_3,ROC_italy_4,ROC_italy_5,ROC_italy_6,ROC_italy_7,ROC_italy_8,ROC_italy_9,ROC_italy_10,ROC_italy_11,ROC_italy_12,ROC_italy_13,ROC_italy_14,ROC_italy_15)
+combined_plot_italy_4marker <- ROCplot_func(combined_roc_italy_data,"specificity","sensitivity","model","Italy")
+
+combined_roc_both_data <- rbind(ROC_both_1, ROC_both_2,ROC_both_3,ROC_both_4,ROC_both_5,ROC_both_6,ROC_both_7,ROC_both_8,ROC_both_9,ROC_both_10,ROC_both_11,ROC_both_12,ROC_both_13,ROC_both_14,ROC_both_15)
+combined_plot_both_4marker <- ROCplot_func(combined_roc_both_data,"specificity","sensitivity","model","Italy")
+
+save(combined_plot_discovery_4marker,combined_plot_sweden_4marker,combined_plot_italy_4marker,combined_plot_both_4marker,file="../Results/Figures/combined_ROCplot_4marker.RData")
+```
+

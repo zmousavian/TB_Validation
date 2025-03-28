@@ -1,0 +1,602 @@
+---
+title: "New Olink Study"
+author: "Zaynab Mousavian"
+date: "12 June 2024"
+output:
+  html_document: default
+  pdf_document: default
+subtitle: Bridge samples
+---
+
+```{r setup, include=FALSE}
+# Set global options for all chunks
+knitr::opts_chunk$set(
+  message = FALSE,
+  warning = FALSE
+)
+```
+
+# Loading R packages
+
+```{r}
+library(OlinkAnalyze)
+library(readxl)
+library(tidyverse)
+```
+
+# 1. Read all datasets
+
+```{r}
+npx_data_June19 <- read_NPX(filename = "../Data/Olink iscience/June-2019/NPX_data_files/Stimulated TB PBMCs (plasma samples)_NPX_LOD.xlsx")
+npx_data_Nov19 <- read_NPX(filename = "../Data/Olink iscience/Nov-2019/NPX_data_files/MTB_plasma_profiling_NPX_LOD.xlsx")
+npx_data_Jan20 <- read_NPX("../Data/Olink iscience/Jan-2020/NPX_data_files/TB_5_days_supernatant_NPX_LOD.xlsx")
+npx_data_May22 <- read_NPX(filename = "../Data/Olink old validation/Plasma profiling May 2022/shared_with_user/NPX_data_files/TB validation_NPX_LOD.xlsx")
+npx_data_edta <- read_NPX(filename ="../Data/edta_Data_NPX_LOD_wide.xlsx")
+npx_data_heparin <- read_NPX(filename ="../Data/heparin_Data_NPX_LOD_wide.xlsx")
+load("../Data/ReadyData/AllDatasets-Samples.RData")
+```
+
+# 2. Bridge three datasets in the first dataset
+
+```{r}
+npx_data_June19 <- read_NPX(filename = "../Data/Olink iscience/June-2019/NPX_data_files/Stimulated TB PBMCs (plasma samples)_NPX_LOD.xlsx")
+npx_data_Nov19 <- read_NPX(filename = "../Data/Olink iscience/Nov-2019/NPX_data_files/MTB_plasma_profiling_NPX_LOD.xlsx")
+npx_data_Jan20 <- read_NPX("../Data/Olink iscience/Jan-2020/NPX_data_files/TB_5_days_supernatant_NPX_LOD.xlsx")
+
+# remove samples with NA values
+npx_data_Nov19 <- npx_data_Nov19 %>% 
+  filter(!SampleID%in%c("LS040", "LS042")) 
+
+samples <- data.frame(read_excel("../Data/Olink iscience/Samples-discovery.xlsx"))
+
+npx_data_June19 <- npx_data_June19 %>% left_join(samples, by = "SampleID")
+npx_data_Nov19 <- npx_data_Nov19 %>% left_join(samples, by = "SampleID")
+npx_data_Jan20 <- npx_data_Jan20 %>% left_join(samples, by = "SampleID")
+
+npx_data_Jan20 <- npx_data_Jan20%>%
+  filter(!is.na(subjectID))
+
+npx_data_June19$SampleID <- npx_data_June19$subjectID
+npx_data_Nov19$SampleID <- npx_data_Nov19$subjectID
+npx_data_Jan20$SampleID <- npx_data_Jan20$subjectID
+
+npx_data1 <- npx_data_June19
+npx_data2 <- npx_data_Nov19
+npx_data3 <- npx_data_Jan20
+
+npx_1 <- npx_data1 %>%
+  mutate(Project = "data1")
+npx_2 <- npx_data2 %>%
+  mutate(Project = "data2")
+npx_3 <- npx_data3 %>%
+  mutate(Project = "data3")
+
+overlap_samples <-data.frame(SampleID = intersect(npx_1$SampleID, npx_2$SampleID)) %>%
+  filter(!str_detect(SampleID, "CONTROL_SAMPLE")) %>% #Remove control samples
+  pull(SampleID)
+
+overlap_samples_list <- list("DF1" = overlap_samples,
+                             "DF2" = overlap_samples)
+
+# Perform Bridging normalization
+npx_br_data <- olink_normalization_bridge(project_1_df = npx_1,
+                                          project_2_df = npx_2,
+                                          bridge_samples = overlap_samples_list,
+                                          project_1_name = "data1",
+                                          project_2_name = "data2",
+                                          project_ref_name = "data1")
+
+new_normalized_data_1 <- npx_br_data %>% 
+  dplyr::filter(Project == "data1") %>% 
+  dplyr::select(-Project, -Adj_factor) 
+
+new_normalized_data_2 <- npx_br_data %>% 
+  dplyr::filter(Project == "data2") %>% 
+  dplyr::select(-Project, -Adj_factor) 
+
+overlap_samples <-data.frame(SampleID = intersect(npx_1$SampleID, npx_3$SampleID)) %>%
+  filter(!str_detect(SampleID, "CONTROL_SAMPLE")) %>% #Remove control samples
+  pull(SampleID)
+
+overlap_samples_list <- list("DF1" = overlap_samples,
+                             "DF2" = overlap_samples)
+
+# Perform Bridging normalization
+npx_br_data <- olink_normalization_bridge(project_1_df = npx_1,
+                                          project_2_df = npx_3,
+                                          bridge_samples = overlap_samples_list,
+                                          project_1_name = "data1",
+                                          project_2_name = "data3",
+                                          project_ref_name = "data1")
+
+new_normalized_data_1 <- npx_br_data %>% 
+  dplyr::filter(Project == "data1") %>% 
+  dplyr::select(-Project, -Adj_factor) 
+
+new_normalized_data_3 <- npx_br_data %>% 
+  dplyr::filter(Project == "data3") %>% 
+  dplyr::select(-Project, -Adj_factor) 
+
+new_normalized_data_1 <- new_normalized_data_1%>%
+  select(-Batch,-Group,-Origin,-subjectID)
+new_normalized_data_2 <- new_normalized_data_2%>%
+  select(-Batch,-Group,-Origin,-subjectID)
+new_normalized_data_3 <- new_normalized_data_3%>%
+  select(-Batch,-Group,-Origin,-subjectID)
+```
+
+# 3. Bridge second dataset with first dataset 
+
+```{r}
+npx_data_May22 <- read_NPX(filename = "../Data/Olink old validation/Plasma profiling May 2022/shared_with_user/NPX_data_files/TB validation_NPX_LOD.xlsx")
+
+npx_data_May22 <- npx_data_May22 %>% 
+  filter(!SampleID%in%c("Facility Ctrl 1", "Facility Ctrl 2","LAM007 (2)","LAM008 (2)","DS61","DS13", "TB0061","TB0059")) %>%
+  select(-Normalization)
+
+
+npx_data1 <- new_normalized_data_1
+npx_data2 <- npx_data_May22
+
+npx_1 <- npx_data1 %>%
+  mutate(Project = "data1")
+npx_2 <- npx_data2 %>%
+  mutate(Project = "data2")
+
+overlap_samples_list <-list("DF1" = c("LS003", "LS004","AS007_R","LS008","AS009_R","HS012","HS013","HS016"),
+                           "DF2" = c("LAM003","LAM004","LAM007 (1)","LAM008 (1)","LAM009","LAM012","LAM013","LAM016"))
+
+npx_br_data <- olink_normalization_bridge(project_1_df = npx_1,
+                                          project_2_df = npx_2,
+                                          bridge_samples = overlap_samples_list,
+                                          project_1_name = "data1",
+                                          project_2_name = "data2",
+                                          project_ref_name = "data1")
+
+new_normalized_data_1 <- npx_br_data %>% 
+  dplyr::filter(Project == "data1") %>% 
+  dplyr::select(-Project, -Adj_factor) 
+
+new_normalized_data_4 <- npx_br_data %>% 
+  dplyr::filter(Project == "data2") %>% 
+  dplyr::select(-Project, -Adj_factor) 
+```
+
+
+# 4. Bridge dataset3-heparin with second dataset
+
+```{r}
+npx_data_heparin <- read_NPX(filename ="../Data/heparin_Data_NPX_LOD_wide.xlsx")
+
+npx_data_heparin <- npx_data_heparin %>%
+  filter(!SampleID%in%c("Facility Ctrl", "Facility Ctrl-2", "MaxLOD","PZ 3")) %>%
+  select(-Normalization)
+
+npx_data_edta <- read_NPX(filename ="../Data/edta_Data_NPX_LOD_wide.xlsx")
+
+npx_data_edta <- npx_data_edta %>% 
+  filter(!SampleID%in%c("Facility Ctrl", "Facility Ctrl-2", "MaxLOD","TB0133.e","TB0161.e")) %>%
+  select(-Normalization)
+
+npx_data1 <- new_normalized_data_4
+npx_data2 <- npx_data_heparin%>%rbind(npx_data_edta)
+
+npx_1 <- npx_data1 %>%
+  mutate(Project = "data1")
+npx_2 <- npx_data2 %>%
+  mutate(Project = "data2")
+
+overlap_samples_list <-list("DF1" = c("STAMIR","DIFRA","RAKIMI","XIBIN","SERIU","LUKORA","CIFAB3","FORTAN","TB0075","TB0077","TB0078","TB0079","TB0089","TB0091","TB0092","TB0096","TB0102","TB0108","TB0109"),
+                           "DF2" = c("Old delia1", "Old delia2", "Old delia3", "Old delia4","Old delia5", "Old delia6", "Old delia7", "Old delia8","TB0075.0","TB0077.0","TB0078","TB0079","TB0089","TB0091.0","TB0092.0","TB0096","TB0102","TB0108","TB0109"))
+
+npx_br_data <- olink_normalization_bridge(project_1_df = npx_1,
+                                          project_2_df = npx_2,
+                                          bridge_samples = overlap_samples_list,
+                                          project_1_name = "data1",
+                                          project_2_name = "data2",
+                                          project_ref_name = "data1")
+
+
+new_normalized_data_4 <- npx_br_data %>% 
+  dplyr::filter(Project == "data1") %>% 
+  dplyr::select(-Project, -Adj_factor) 
+
+new_normalized_data_5 <- npx_br_data %>% 
+  dplyr::filter(Project == "data2") %>% 
+  dplyr::select(-Project, -Adj_factor) 
+```
+
+# 5. Bridge dataset3-heparin with first dataset 
+
+```{r}
+npx_data1 <- new_normalized_data_2
+npx_data2 <- new_normalized_data_5
+
+npx_1 <- npx_data1 %>%
+  mutate(Project = "data1")
+npx_2 <- npx_data2 %>%
+  mutate(Project = "data2")
+
+overlap_samples_list <-list("DF1" = c("AS035", "AS029"),
+                           "DF2" = c("TB0035.0","TB0029.0"))
+
+npx_br_data <- olink_normalization_bridge(project_1_df = npx_1,
+                                          project_2_df = npx_2,
+                                          bridge_samples = overlap_samples_list,
+                                          project_1_name = "data1",
+                                          project_2_name = "data2",
+                                          project_ref_name = "data1")
+
+
+new_normalized_data_2 <- npx_br_data %>% 
+  dplyr::filter(Project == "data1") %>% 
+  dplyr::select(-Project, -Adj_factor) 
+
+new_normalized_data_5 <- npx_br_data %>% 
+  dplyr::filter(Project == "data2") %>% 
+  dplyr::select(-Project, -Adj_factor) 
+
+npx_data1 <- new_normalized_data_3
+npx_data2 <- new_normalized_data_5
+
+npx_1 <- npx_data1 %>%
+  mutate(Project = "data1")
+npx_2 <- npx_data2 %>%
+  mutate(Project = "data2")
+
+overlap_samples_list <-list("DF1" = c("AS0038","AS1002"),
+                           "DF2" = c("TB0038.0","TBHA1002.0"))
+
+npx_br_data <- olink_normalization_bridge(project_1_df = npx_1,
+                                          project_2_df = npx_2,
+                                          bridge_samples = overlap_samples_list,
+                                          project_1_name = "data1",
+                                          project_2_name = "data2",
+                                          project_ref_name = "data1")
+
+new_normalized_data_3 <- npx_br_data %>% 
+  dplyr::filter(Project == "data1") %>% 
+  dplyr::select(-Project, -Adj_factor) 
+
+new_normalized_data_5 <- npx_br_data %>% 
+  dplyr::filter(Project == "data2") %>% 
+  dplyr::select(-Project, -Adj_factor) 
+```
+
+# 6. Showing all datasets using PCA plot {.tabset}
+
+## Before bridge
+
+```{r message=FALSE}
+npx_data_June19 <- npx_data_June19 %>% select(-Batch,-Group,-Origin,-subjectID)
+npx_data_Nov19 <- npx_data_Nov19 %>% select(-Batch,-Group,-Origin,-subjectID)
+npx_data_Jan20 <- npx_data_Jan20 %>% select(-Batch,-Group,-Origin,-subjectID)
+
+npx_before_br <- npx_data_June19%>%
+  mutate(SampleID=paste0(SampleID,"-data1"), Type="data1")%>%
+  rbind((npx_data_Nov19%>%
+ mutate(SampleID=paste0(SampleID,"-data2"), Type="data2")))%>%
+  rbind((npx_data_Jan20%>%
+  mutate(SampleID=paste0(SampleID,"-data3"), Type="data3")))%>%
+  rbind((npx_data_May22%>%
+  mutate(SampleID=paste0(SampleID,"-data4"), Type="data4")))%>%
+  rbind((npx_data_heparin%>%
+ mutate(SampleID=paste0(SampleID,"-data5"), Type="data5")))
+
+### PCA plot
+OlinkAnalyze::olink_pca_plot(df  = npx_before_br,
+                             color_g     = "Type",
+                             byPanel     = TRUE)
+```
+
+## After bridge
+
+```{r message=FALSE}
+npx_after_br <- new_normalized_data_1%>%
+  mutate(SampleID=paste0(SampleID,"-data1"), Type="data1")%>%
+  rbind((new_normalized_data_2%>%
+ mutate(SampleID=paste0(SampleID,"-data2"), Type="data2")))%>%
+  rbind((new_normalized_data_3%>%
+  mutate(SampleID=paste0(SampleID,"-data3"), Type="data3")))%>%
+  rbind((new_normalized_data_4%>%
+  mutate(SampleID=paste0(SampleID,"-data4"), Type="data4")))%>%
+  rbind((new_normalized_data_5%>%
+ mutate(SampleID=paste0(SampleID,"-data5"), Type="data5")))
+
+### PCA plot
+OlinkAnalyze::olink_pca_plot(df  = npx_after_br,
+                             color_g     = "Type",
+                             byPanel     = TRUE,
+                             label_outliers = TRUE)
+```
+
+# Showing groups to see the effect of bridging {.tabset}
+
+## Before bridge
+
+```{r}
+samples <- read_excel(path="../Data/Plasma profiling_Feb_2024_final.xlsx",sheet = "Samples and randomization")
+samples$`TB status` <- gsub("Latent","Latent remote",samples$`TB status`)
+samples$`TB status` <- gsub("Latent remote remote","Latent remote",samples$`TB status`)
+samples$`TB status` <- gsub("Remote LTBI","Latent remote",samples$`TB status`)
+samples <- samples %>% rename("SampleID"=`Sample ID`,"Group"=`TB status`) 
+
+npx_data_heparin_2 <- npx_data_heparin %>% left_join(samples,by = "SampleID")
+npx_data_edta_2 <- npx_data_edta %>% left_join(samples,by = "SampleID")
+
+samples <- data.frame(read_excel("../Data/Olink old validation/Samples-validation-old run.xlsx"))
+samples <- samples %>% rename("SampleID"=Sample.ID,"Group"=Group) 
+
+npx_data_May22_2 <- npx_data_May22 %>% left_join(samples,by = "SampleID")
+
+npx_data_heparin_2  <- npx_data_heparin_2 %>% select(-`Study ID`,-Rack,-Box,-...6,-...7,-...8)
+npx_data_edta_2  <- npx_data_edta_2 %>% select(-`Study ID`,-Rack,-Box,-...6,-...7,-...8)
+npx_data_May22_2  <- npx_data_May22_2 %>% select(-Sample.origin,-Diagnosis,-Final.group,-...5)
+
+npx_before_br <- npx_data_heparin_2 %>%
+  mutate(SampleID=paste0(SampleID,"-data5"), Type="data5")%>%
+  arrange(Group)%>%
+  rbind((npx_data_edta_2 %>%
+  mutate(SampleID=paste0(SampleID,"-data5"), Type="data5")%>%
+  arrange(Group)))
+
+OlinkAnalyze::olink_pca_plot(df  = npx_before_br,
+                             color_g = "Group",
+                             byPanel     = TRUE)
+
+npx_before_br <- npx_data_May22_2 %>%
+  mutate(SampleID=paste0(SampleID,"-data4"), Type="data4")%>%
+  arrange(Group)
+
+OlinkAnalyze::olink_pca_plot(df  = npx_before_br,
+                             color_g = "Group",
+                             byPanel     = TRUE)
+
+npx_before_br <- npx_data_heparin_2 %>%
+  mutate(SampleID=paste0(SampleID,"-data5"), Type="data5")%>%
+  arrange(Group)%>%
+  rbind((npx_data_edta_2 %>%
+  mutate(SampleID=paste0(SampleID,"-data5"), Type="data5")%>%
+  arrange(Group)))%>%
+  rbind((npx_data_May22_2 %>%
+  mutate(SampleID=paste0(SampleID,"-data4"), Type="data4")%>%
+  arrange(Group)))
+
+OlinkAnalyze::olink_pca_plot(df  = npx_before_br,
+                             color_g = "Group",
+                             byPanel     = TRUE)
+```
+
+## After bridge
+
+```{r}
+samples <- read_excel(path="../Data/Plasma profiling_Feb_2024_final.xlsx",sheet = "Samples and randomization")
+samples$`TB status` <- gsub("Latent","Latent remote",samples$`TB status`)
+samples$`TB status` <- gsub("Latent remote remote","Latent remote",samples$`TB status`)
+samples$`TB status` <- gsub("Remote LTBI","Latent remote",samples$`TB status`)
+samples <- samples %>% rename("SampleID"=`Sample ID`,"Group"=`TB status`) 
+
+new_normalized_data_5_2 <- new_normalized_data_5 %>%
+  left_join(samples,by = "SampleID")
+
+samples <- data.frame(read_excel("../Data/Olink old validation/Samples-validation-old run.xlsx"))
+samples <- samples %>% rename("SampleID"=Sample.ID,"Group"=Group) 
+
+new_normalized_data_4_2 <- new_normalized_data_4 %>%
+  left_join(samples,by = "SampleID")
+
+new_normalized_data_5_2  <- new_normalized_data_5_2 %>% select(-`Study ID`,-Rack,-Box,-...6,-...7,-...8)
+new_normalized_data_4_2  <- new_normalized_data_4_2 %>% select(-Sample.origin,-Diagnosis,-Final.group,-...5)
+
+npx_after_br <- new_normalized_data_5_2 %>%
+  mutate(SampleID=paste0(SampleID,"-data5"), Type="data5") %>%
+  arrange(Group)
+
+OlinkAnalyze::olink_pca_plot(df  = npx_after_br,
+                              color_g = "Group",
+                             byPanel     = TRUE)
+
+npx_after_br <- new_normalized_data_4_2 %>%
+  mutate(SampleID=paste0(SampleID,"-data4"), Type="data4")%>%
+  arrange(Group)
+### PCA plot
+OlinkAnalyze::olink_pca_plot(df  = npx_after_br,
+                              color_g = "Group",
+                             byPanel     = TRUE)
+
+npx_after_br <- new_normalized_data_5_2 %>%
+  mutate(SampleID=paste0(SampleID,"-data5"), Type="data5") %>%
+  arrange(Group)%>%
+  rbind((new_normalized_data_4_2 %>%
+  mutate(SampleID=paste0(SampleID,"-data4"), Type="data4")%>%
+  arrange(Group)))
+
+OlinkAnalyze::olink_pca_plot(df  = npx_after_br,
+                              color_g = "Group",
+                             byPanel     = TRUE)
+```
+
+# Make data ready {.tabset}
+
+## First dataset
+
+```{r}
+npx_data_first <- new_normalized_data_1%>%
+  rbind((new_normalized_data_2))%>%
+  rbind(new_normalized_data_3)
+
+samples_sweden <- samples_first%>%
+  filter(Origin=="Sweden")%>%
+  select(SampleID)%>%
+  unlist()
+npx_data_first_sweden <- npx_data_first%>%
+  filter(SampleID%in%samples_sweden)
+
+samples_portugal <- samples_first%>%
+  filter(Origin=="Portugal")%>%
+  select(SampleID)%>%
+  unlist()
+npx_data_first_portugal <- npx_data_first%>%
+  filter(SampleID%in%samples_portugal)
+
+samples_first <- samples_first%>%
+  mutate(modifiedType = case_when(
+    str_detect(Type,"Healthy controls") ~ "Control",
+    str_detect(Type,"Contacts") ~ "Latent",
+    TRUE ~ Type))
+
+samples_first <- samples_first%>%
+  filter(!is.na(modifiedType))
+
+samples_first%>%
+  select(modifiedType)%>%
+  table()
+```
+
+## Second dataset
+
+```{r}
+npx_data_second <- new_normalized_data_4
+overlapping_samples <- c("LAM003","LAM004","LAM007 (1)","LAM008 (1)","LAM009","LAM012","LAM013","LAM016")
+
+samples_sweden <- samples_second%>%
+  filter(`Sample origin`=="Sweden")%>%
+  select(SampleID)%>%
+  unlist()
+npx_data_second_sweden <- npx_data_second%>%
+  filter(SampleID%in%samples_sweden)%>%
+  filter(!SampleID%in%overlapping_samples)
+
+samples_italy <- samples_second%>%
+  filter(`Sample origin`=="Italy")%>%
+  select(SampleID)%>%
+  unlist()
+npx_data_second_italy <- npx_data_second%>%
+  filter(SampleID%in%samples_italy)%>%
+  filter(!SampleID%in%overlapping_samples)
+
+samples_second <- samples_second%>%
+  mutate(modifiedType = case_when(
+    str_detect(Type,"Active") ~ "Active",
+    str_detect(Type,"Aktiv") ~ "Active",
+    str_detect(Type,"aktiv") ~ "Active",
+    str_detect(Type,"PULMONARY TB") ~ "Active",
+    str_detect(Type,"active") ~ "Active",
+    str_detect(Type,"Latent") ~ "Latent",
+    str_detect(Type,"latent") ~ "Latent",
+    str_detect(Type,"LTBI") ~ "Latent",
+    str_detect(Type,"IGRA+ contact") ~ "Latent",
+    str_detect(Type,"Contact, IGRA+") ~ "Latent",
+    str_detect(Type,"Contact, IGRA-") ~ "Control",
+    str_detect(Type,"IGRA- contact") ~ "Control",
+    str_detect(Type,"Control, IGRA-") ~ "Control",
+    str_detect(Type,"HD") ~ "Control",
+    str_detect(`Final group`,"Latent") ~ "Latent",
+    str_detect(`Final group`,"Control") ~ "Control",
+    TRUE ~ Type))
+
+samples_second[which(samples_second$SampleID=="TB0068"),"modifiedType"]="Control"
+samples_second[which(samples_second$SampleID=="TB0088"),"modifiedType"]="Control"
+samples_second[which(samples_second$SampleID=="TB0091"),"modifiedType"]="Active"
+
+samples_second <- samples_second%>%
+  filter(!is.na(modifiedType))
+
+samples_second%>%
+  select(modifiedType)%>%
+  table()
+```
+
+## Third dataset
+
+```{r}
+heparin_samples <- npx_data_heparin%>%select(SampleID)%>%unique()%>%unlist()
+edta_samples <- npx_data_edta%>%select(SampleID)%>%unique()%>%unlist()
+overlapping_samples <- c("Old delia1", "Old delia2", "Old delia3", "Old delia4","Old delia5", "Old delia6", "Old delia7", "Old delia8","TB0075.0","TB0077.0","TB0078","TB0079","TB0089","TB0091.0","TB0092.0","TB0096","TB0102","TB0108","TB0109","TB0035.0","TB0029.0","TB0038.0","TBHA1002.0")
+
+new_normalized_data_5_heparin <- new_normalized_data_5%>%
+  filter(SampleID%in%heparin_samples)%>%
+  filter(!SampleID%in%overlapping_samples)
+
+new_normalized_data_5_edta <- new_normalized_data_5%>%
+  filter(SampleID%in%edta_samples)
+
+new_normalized_data_5_heparin <- new_normalized_data_5_heparin %>%
+  mutate(ends_with_x = str_detect(SampleID, "_r$")) %>%
+  filter(ends_with_x==FALSE)
+
+new_normalized_data_5_edta <- new_normalized_data_5_edta %>%
+  mutate(ends_with_x = str_detect(SampleID, "_r$")) %>%
+  filter(ends_with_x==FALSE)
+
+npx_data_third_heparin <- new_normalized_data_5_heparin
+
+npx_data_third_heparin_nonTB <- npx_data_third_heparin%>%
+  filter(str_starts(SampleID, "PZ"))
+
+npx_data_third_heparin_followTreatment <- npx_data_third_heparin%>%
+  filter(str_ends(SampleID,"\\.0"))%>%
+  rbind((npx_data_third_heparin%>%
+           filter(str_ends(SampleID, "\\.1"))))%>%
+  rbind((npx_data_third_heparin%>%
+           filter(str_ends(SampleID, "\\.2"))))
+
+npx_data_third_heparin <- npx_data_third_heparin%>%
+  filter(!str_starts(SampleID,"PZ"),!str_ends(SampleID, "\\.1"),!str_ends(SampleID, "\\.2"))
+  
+npx_data_third_edta <- new_normalized_data_5_edta
+
+samples_third <- samples_third%>%
+  mutate(modifiedType = case_when(
+    str_detect(Type,"Active") ~ "Active",
+    str_detect(Type,"Pulmonary TB") ~ "Active",
+    str_detect(Type,"Latent") ~ "Latent",
+    str_detect(Type,"LTBI") ~ "Latent",
+    str_detect(Type,"HC") ~ "Control",
+    TRUE~ Type))
+
+samples_third <- samples_third%>%
+  mutate(Treatment = case_when(
+    str_ends(SampleID,"\\.0") ~ "Baseline",
+    str_ends(SampleID,"\\.1") ~ "2 Months",
+    str_ends(SampleID,"\\.2") ~ "6 Months",
+    TRUE ~ "Non-treatment"))
+
+
+samples_third%>%
+  select(modifiedType)%>%
+  table()
+
+samples_third%>%
+  select(Treatment)%>%
+  table()
+```
+
+# Remove eyeTBs
+
+```{r}
+npx_data_third_heparin <- npx_data_third_heparin%>%
+  filter(SampleID!="TB0198")
+
+npx_data_third_heparin_followTreatment <- npx_data_third_heparin_followTreatment%>%
+  filter(SampleID!="TB0077.1"&SampleID!="TB0077.2")
+
+npx_data_third_edta <- npx_data_third_edta%>%
+  filter(SampleID!="TB0077.e")
+
+npx_data_third_edta <- npx_data_third_edta%>%
+  filter(SampleID!="TB0198.e")
+```
+
+# Save all datasets
+
+```{r}
+save(npx_data_first_sweden,npx_data_first_portugal,npx_data_second_sweden,npx_data_second_italy,npx_data_third_heparin,npx_data_third_heparin_nonTB,npx_data_third_heparin_followTreatment,npx_data_third_edta, file="../Data/ReadyData/AllDatasets-NPX.RData")
+
+write.table(samples_first,file="../Results/Samples_first.txt",sep = "\t",row.names = FALSE)
+write.table(samples_second,file="../Results/Samples_second.txt",sep = "\t",row.names = FALSE)
+write.table(samples_third,file="../Results/Samples_third.txt",sep = "\t",row.names = FALSE)
+
+save(samples_first, samples_second, samples_third,file="../Data/ReadyData/AllDatasets-Samples.RData")
+```
+

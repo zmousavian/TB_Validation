@@ -1,0 +1,264 @@
+---
+title: "New Olink Study"
+author: "Zaynab Mousavian"
+date: "9 August 2024"
+output:
+  html_document: default
+  pdf_document: default
+subtitle: Heatmap plots
+---
+
+```{r setup, include=FALSE}
+# Set global options for all chunks
+knitr::opts_chunk$set(
+  message = FALSE,
+  warning = FALSE
+)
+```
+
+# load packages
+
+```{r}
+library(tidyverse) 
+library(readxl)
+library(janitor)
+library(RColorBrewer) 
+library(ggpubr) 
+library(ggplot2)
+library(dplyr)
+library(cli)
+library(remotes)
+library(devtools)
+library(cluster)
+library(ComplexHeatmap) 
+library(RColorBrewer)
+library(circlize)
+library(ggplot2)
+library(dplyr)
+```
+
+# load data 
+
+```{r}
+l=load("../Data/ReadyData/AllDatasets-Samples.RData")
+signature <- c("IFN-gamma","CXCL9","VEGFA","CDCP1","MCP-3","IL6","CCL19","CD40","IL7","MMP-1","PD-L1","IL-12B")
+```
+
+# Which data? {.tabset}
+
+## TB
+
+### read data sweden
+
+```{r}
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-third-heparin.RData")
+dat_Expr_third_heparin <- t(olink)
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-second-sweden.RData")
+dat_Expr_second_sweden <- t(olink)
+
+groups_third_heparin <- samples_third[match(colnames(dat_Expr_third_heparin),samples_third$SampleID),"modifiedType",drop=TRUE]
+groups_second_sweden <- samples_second[match(colnames(dat_Expr_second_sweden),samples_second$SampleID),"modifiedType",drop=TRUE]
+
+dat_Expr_sweden <- dat_Expr_third_heparin%>%
+  cbind(dat_Expr_second_sweden)
+groups_sweden <- c(groups_third_heparin,groups_second_sweden)
+groups_sweden <- factor(groups_sweden,levels = c("Active","Latent","Control"))
+
+dat_Expr_sweden <- dat_Expr_sweden[signature,]%>%
+  t()%>%
+  as.data.frame()
+dat_Expr_sweden$Group <- groups_sweden
+dat_Expr_sweden <- dat_Expr_sweden%>%
+  arrange(groups_sweden)
+
+groups_sweden <- dat_Expr_sweden%>%
+  select(Group)%>%
+  unlist()
+dat_Expr_sweden <- dat_Expr_sweden%>%
+  select(-Group)%>%
+  t()
+```
+
+### read data portugal
+
+```{r}
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-portugal.RData")
+dat_Expr_portugal <- t(olink)
+groups_portugal <- samples_first[match(colnames(dat_Expr_portugal),samples_first$SampleID),"modifiedType",drop=TRUE]
+
+groups_portugal <- factor(groups_portugal,levels = c("Active","Latent","Control"))
+
+dat_Expr_portugal <- dat_Expr_portugal[signature,]%>%
+  t()%>%
+  as.data.frame()
+dat_Expr_portugal$Group <- groups_portugal
+dat_Expr_portugal <- dat_Expr_portugal%>%
+  arrange(groups_portugal)
+
+groups_portugal <- dat_Expr_portugal%>%
+  select(Group)%>%
+  unlist()
+dat_Expr_portugal <- dat_Expr_portugal%>%
+  select(-Group)%>%
+  t()
+```
+
+### read data italy
+
+```{r}
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-second-italy.RData")
+dat_Expr_italy <- t(olink)
+groups_italy <- samples_second[match(colnames(dat_Expr_italy),samples_second$SampleID),"modifiedType",drop=TRUE]
+
+groups_italy <- factor(groups_italy,levels = c("Active","Latent","Control"))
+
+dat_Expr_italy <- dat_Expr_italy[signature,]%>%
+  t()%>%
+  as.data.frame()
+dat_Expr_italy$Group <- groups_italy
+dat_Expr_italy <- dat_Expr_italy%>%
+  arrange(groups_italy)
+
+groups_italy <- dat_Expr_italy%>%
+  select(Group)%>%
+  unlist()
+dat_Expr_italy <- dat_Expr_italy%>%
+  select(-Group)%>%
+  t()
+```
+
+### combine all datasets
+
+```{r}
+input_data <- dat_Expr_sweden%>%
+  cbind(dat_Expr_portugal)%>%
+  cbind(dat_Expr_italy)
+
+annotation_group <- c(groups_sweden,groups_portugal,groups_italy)
+```
+
+### Heatmap visualization
+
+```{r}
+library(circlize)
+color_fun <- colorRamp2(c(4, 0, -4), brewer.pal(3, "RdBu"))
+
+split_vector_columns <- rep(c("Sweden", "Portugal", "Italy"), times = c(length(groups_sweden), length(groups_portugal), length(groups_italy)))
+
+column_annotation <- HeatmapAnnotation(
+    Type = annotation_group,
+    col = list(Type = c("Active"="#2F8AC4", "Latent"="#E48725", "Control"="#A5AA99")),
+    annotation_name_gp = gpar(col = "white"),
+    show_legend = FALSE)
+
+
+split_vector_rows <- factor(rep(c("4", "7", "12"), times = c(4, 3, 5)),levels=c("4","7","12"))
+
+input_data_scaled <- t(apply(input_data, 1, scale))
+colnames(input_data_scaled) <- colnames(input_data)
+Fig2_heatmap <- ComplexHeatmap::Heatmap(input_data_scaled,
+                        name=" ",
+                        row_names_side = "left",
+                        row_names_gp = grid::gpar(fontsize = 8),
+                        row_gap = unit(1.5,"mm"),
+                        column_names_gp = grid::gpar(fontsize = 8),
+                        cluster_columns = FALSE,
+                        column_gap = unit(1.5,"mm"),
+                        col=color_fun,
+                        cluster_rows = FALSE,
+                        show_column_names = FALSE,
+                        row_title = NULL,
+                        column_split = split_vector_columns,
+                        row_split = split_vector_rows,
+                        top_annotation = column_annotation)
+Fig2_heatmap
+save(Fig2_heatmap,file="../Results/Figures/Fig2_heatmap.RData")
+```
+
+
+
+
+
+## non-TB
+
+### read data italy
+```{r}
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-third-heparin-nonTB.RData")
+dat_Expr_nonTB_italy <- t(olink)
+groups_nonTB_italy <- samples_third[match(colnames(dat_Expr_nonTB_italy),samples_third$SampleID),"modifiedType",drop=TRUE]
+
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-second-italy.RData")
+dat_Expr_TB_italy <- t(olink)
+groups_TB_italy <- samples_second[match(colnames(dat_Expr_TB_italy),samples_second$SampleID),"modifiedType",drop=TRUE]
+
+dat_Expr <- dat_Expr_nonTB_italy%>%
+  cbind(dat_Expr_TB_italy)
+groups <- c(groups_nonTB_italy,groups_TB_italy)
+
+input_data <- dat_Expr[signature,]%>%
+  t()%>%
+  as.data.frame()
+
+input_data$Group <- groups
+
+input_data <- input_data%>%
+  mutate(newGroup = case_when(
+    str_detect(Group,"Pneumonia") ~ "nonTB",
+    str_detect(Group,"Excavated pneumonia") ~ "nonTB",
+    str_detect(Group,"MAC") ~ "nonTB",
+    str_detect(Group,"Lung adenocarcinomas") ~ "nonTB",
+    TRUE ~ Group))
+
+input_data$newGroup <- factor(input_data$newGroup,levels = c("Active","nonTB","Latent","Control"))
+
+input_data <- input_data%>%
+  arrange(newGroup)
+
+annotation_group <- input_data%>%
+  select(newGroup)%>%
+  unlist()
+
+input_data <-input_data%>%
+  select(-c(Group,newGroup))%>%
+  t()
+```
+
+### Heatmap visualization
+
+```{r}
+library(circlize)
+color_fun <- colorRamp2(c(4, 0, -4), brewer.pal(3, "RdBu"))
+
+split_vector_columns <- factor(rep(c("Active","nonTB","Latent","Control"), times = table(annotation_group)),levels=c("Active","nonTB","Latent","Control"))
+
+column_annotation <- HeatmapAnnotation(
+    Type = annotation_group,
+    col = list(Type = c("Active"="#2F8AC4","nonTB"="#A3B574", "Latent"="#E48725", "Control"="#A5AA99")),
+    annotation_name_gp = gpar(col = "white"),
+    show_legend = FALSE)
+
+
+split_vector_rows <- factor(rep(c("4", "6", "12"), times = c(4, 2, 6)),levels=c("4","6","12"))
+
+input_data_scaled <- t(apply(input_data, 1, scale))
+colnames(input_data_scaled) <- colnames(input_data)
+Fig3_heatmap <- ComplexHeatmap::Heatmap(input_data_scaled,
+                        name=" ",
+                        row_names_side = "left",
+                        row_names_gp = grid::gpar(fontsize = 8),
+                        row_gap = unit(1.5,"mm"),
+                        column_names_gp = grid::gpar(fontsize = 8),
+                        cluster_columns = FALSE,
+                        column_gap = unit(1.5,"mm"),
+                        col=color_fun,
+                        cluster_rows = FALSE,
+                        show_column_names = FALSE,
+                        column_title = NULL,
+                        row_title = NULL,
+                        column_split = split_vector_columns,
+                        row_split = split_vector_rows,
+                        top_annotation = column_annotation)
+Fig3_heatmap
+save(Fig3_heatmap,file="../Results/Figures/Fig3_heatmap.RData")
+```
+

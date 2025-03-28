@@ -1,0 +1,720 @@
+---
+title: "New Olink Study"
+author: "Zaynab Mousavian"
+date: "8 August 2024"
+output:
+  html_document: default
+  pdf_document: default
+subtitle: Correlation plots
+---
+
+```{r setup, include=FALSE}
+# Set global options for all chunks
+knitr::opts_chunk$set(
+  message = FALSE,
+  warning = FALSE
+)
+```
+
+# Loading R packages
+
+```{r}
+library(OlinkAnalyze)
+library(readxl)
+library(dplyr)
+library(reshape2)
+library(ggplot2)
+library(corto)
+library(patchwork)
+library(ggpubr)
+library(tidyverse)
+```
+
+# Scatterplot for correlation with facet
+
+```{r}
+scatterplot_func_withfacet <- function(df,x,y,group,colors){
+  correlations <- df %>%
+  group_by(.data[[group]]) %>%
+  summarize(correlation = cor(.data[[x]], .data[[y]], method = "pearson"))
+
+  plot <- ggplot(data=df, aes(x = .data[[x]], y = .data[[y]], color=colors)) +
+    geom_point() +  
+    geom_smooth(method = "lm", se = FALSE, color = "gray",size=0.5) +  
+    scale_color_manual(values = c("#2F8AC4", "#E48725"),labels = c("Active" = "TB Disease","Latent" = "TB Infection"))+
+    facet_wrap(~ .data[[group]],scales = "free") +  
+    labs(title = "", x = "EDTA", y = "Heparin",color="")+
+    theme_minimal()+
+    theme(axis.text.x = element_text(size = 9,angle=0),  
+    axis.text.y = element_text(size = 9),
+    axis.title.y = element_text(size=12),
+    panel.background = element_rect(fill = "white", color = NA),  
+    plot.background = element_rect(fill = "white", color = NA),  
+    panel.grid.major = element_blank(),  
+    panel.grid.minor = element_blank(),
+    panel.border = element_rect(color = "black", fill = NA)
+    )+
+  geom_text(data = correlations, aes(x = Inf, y = Inf, label = paste0("r = ", round(correlation, 2))), 
+            hjust = 1.1, vjust = 1.1, inherit.aes = FALSE, size = 3,color="darkgrey")
+  
+  return(plot)
+}
+```
+
+# Scatterplot for correlation
+
+```{r}
+scatterplot_func <- function(df,x,y,type,x_axis,y_axis){
+  
+  overall_correlation <- cor(df[[x]], df[[y]], method = "pearson")
+  
+  plot <- ggplot(data=df, aes(x = .data[[x]], y = .data[[y]], color=.data[[type]])) +
+    geom_point() +  
+    geom_smooth(method = "lm", se = FALSE, color = "gray",size=0.5) +  
+    scale_color_manual(values = c("#2F8AC4", "#E48725","gray"),labels = c("Active" = "TB Disease","Latent" = "TB Infection","Control"="IGRA- Contact"))+
+    labs(title = "", x = x_axis, y = y_axis,color="")+
+    theme_minimal()+
+    theme(axis.text.x = element_text(size = 9),  
+    axis.text.y = element_text(size = 9),
+    axis.title.y = element_text(size=12),
+    panel.background = element_rect(fill = "white", color = NA),  
+    plot.background = element_rect(fill = "white", color = NA),  
+    panel.grid.major = element_blank(),  
+    panel.grid.minor = element_blank(),
+    panel.border = element_rect(color = "black", fill = NA)
+    )+
+    geom_text(aes(label = paste("Corr:", round(overall_correlation, 2))),
+              x = -Inf, y = Inf, hjust = 0, vjust = 2, 
+              size = 4, color = "darkgrey", inherit.aes = FALSE)
+  
+  return(plot)
+}
+```
+
+
+# Scatterplot for correlation whithin each group
+
+```{r}
+scatterplot_func2 <- function(df,x,y,type,x_axis,y_axis){
+  
+  plot <- ggplot(data=df, aes(x = .data[[x]], y = .data[[y]], color=.data[[type]])) +
+    geom_point() +  
+    geom_smooth(method = "lm", se = FALSE, color = "gray",size=0.5) +  
+    scale_color_manual(values = c("#2F8AC4", "#E48725","gray"),labels = c("Active" = "TB Disease","Latent" = "TB Infection","Control"="IGRA- Contact"))+
+    labs(title = "", x = x_axis, y = y_axis,color="")+
+    theme_minimal()+
+    theme(axis.text.x = element_text(size = 9),  
+    axis.text.y = element_text(size = 9),
+    axis.title.y = element_text(size=12),
+    panel.background = element_rect(fill = "white", color = NA),  
+    plot.background = element_rect(fill = "white", color = NA),  
+    panel.grid.major = element_blank(),  
+    panel.grid.minor = element_blank(),
+    panel.border = element_rect(color = "black", fill = NA)
+    )+
+  stat_cor(aes(label = ..r.label..), method = "pearson", 
+           label.x.npc = 'left', label.y.npc = 'top', 
+           size = 3, 
+           data = df[df[[type]] == "Active", ],color="#2F8AC4") + 
+
+  stat_cor(aes(label = ..r.label..), method = "pearson", 
+           label.x.npc = 'left', label.y.npc = 'bottom', 
+           size = 3, 
+           data = df[df[[type]] == "Latent", ] ,color="#E48725")
+  
+  return(plot)
+}
+```
+
+# load data
+```{r}
+l=load("../Data/ReadyData/AllDatasets-Samples.RData")
+```
+
+# load signature
+
+```{r}
+signature <- c("IFN-gamma","CXCL9","VEGFA","CDCP1","MCP-3","IL6","CCL19","CD40","IL7","MMP-1","PD-L1","IL-12B")
+```
+
+# read EDTA and Heparin NPX data
+
+```{r}
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-third-edta.RData")
+dat_Expr_edta <- t(olink)
+groups_edta <- samples_third[match(colnames(dat_Expr_edta),samples_third$SampleID),"modifiedType",drop=TRUE]
+
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-third-heparin.RData")
+dat_Expr_third_heparin <- t(olink)
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-second-sweden.RData")
+dat_Expr_second_sweden <- t(olink)
+
+groups_third_heparin <- samples_third[match(colnames(dat_Expr_third_heparin),samples_third$SampleID),"modifiedType",drop=TRUE]
+groups_second_sweden <- samples_second[match(colnames(dat_Expr_second_sweden),samples_second$SampleID),"modifiedType",drop=TRUE]
+
+dat_Expr_heparin <- dat_Expr_third_heparin%>%
+  cbind(dat_Expr_second_sweden)
+groups_heparin <- c(groups_third_heparin,groups_second_sweden)
+```
+
+# Overlap between EDTA and Heparin data
+
+```{r}
+EDTA_samples <- colnames(dat_Expr_edta)
+EDTA_samples <- gsub(".e","",EDTA_samples)
+colnames(dat_Expr_edta) <- EDTA_samples
+heparin_samples <- colnames(dat_Expr_heparin)
+heparin_samples <- gsub("\\.0","",heparin_samples)
+colnames(dat_Expr_heparin) <- heparin_samples
+
+overlapping_samples <- intersect(heparin_samples,EDTA_samples)
+dat_Expr_edta <- dat_Expr_edta[signature,overlapping_samples]
+dat_Expr_heparin <- dat_Expr_heparin[signature,overlapping_samples]
+
+samples_third$SampleID <- gsub(".e","",samples_third$SampleID )
+groups <- samples_third[match(overlapping_samples,samples_third$SampleID),"modifiedType",drop=TRUE]
+groups[41] <- "Latent"
+```
+
+# Visulizing correlation between EDTA and Heparin NPX values for the signature
+
+```{r}
+dat_Expr_edta_melted <- melt(dat_Expr_edta)
+colnames(dat_Expr_edta_melted) <- c("Protein_EDTA","Sample_EDTA","NPX_EDTA")
+dat_Expr_heparin_melted <- melt(dat_Expr_heparin)
+colnames(dat_Expr_heparin_melted) <- c("Protein_Heparin","Sample_Heparin","NPX_Heparin")
+
+input_data <- dat_Expr_edta_melted%>%
+  cbind(dat_Expr_heparin_melted)
+
+new_groups <- rep(groups,each=12)
+new_groups <- factor(new_groups, levels = c("Active","Latent"))
+  
+Fig5_correlationplot_markers <- scatterplot_func_withfacet(input_data,"NPX_EDTA","NPX_Heparin","Protein_EDTA",new_groups)
+Fig5_correlationplot_markers 
+```
+
+# Visulizing paired scatterplot between EDTA and Heparin NPX values for the signature
+
+```{r}
+dat_Expr_edta_melted <- melt(dat_Expr_edta)
+colnames(dat_Expr_edta_melted) <- c("Protein","Sample","NPX")
+dat_Expr_edta_melted$Anticoagulant <- rep("EDTA",nrow(dat_Expr_edta_melted))
+dat_Expr_heparin_melted <- melt(dat_Expr_heparin)
+colnames(dat_Expr_heparin_melted) <- c("Protein","Sample","NPX")
+dat_Expr_heparin_melted$Anticoagulant <- rep("Heparin",nrow(dat_Expr_heparin_melted))
+
+input_data <- dat_Expr_edta_melted%>%
+  rbind(dat_Expr_heparin_melted)
+
+new_groups <- rep(groups,each=12)
+new_groups <- factor(new_groups, levels = c("Active","Latent"))
+input_data$Type <- c(new_groups,new_groups)
+input_data$Anticoagulant <- factor(input_data$Anticoagulant, levels = c("Heparin","EDTA"))
+
+p_values <- input_data %>%
+  group_by(Protein) %>%
+  summarise(
+    p_value = t.test(NPX[Anticoagulant == "Heparin"], 
+                     NPX[Anticoagulant == "EDTA"], 
+                     paired = TRUE)$p.value,
+    mean_difference = t.test(NPX[Anticoagulant == "Heparin"], 
+                     NPX[Anticoagulant == "EDTA"], 
+                     paired = TRUE)$estimate,
+  ) %>%
+  mutate(
+    p_label = ifelse(p_value < 0.001, "***",
+                     ifelse(p_value < 0.01, "**",
+                            ifelse(p_value < 0.05, "*", "ns"))),
+    group1 = "Heparin",  # Specify first group
+    group2 = "EDTA"      # Specify second group
+  )
+
+write.csv(p_values,file="../Results/Heparin-EDTA-markers.csv")
+# Create plot
+Fig5_scatterplot_markers <- ggplot(input_data, aes(x = Anticoagulant, y = NPX, color = Type, group = Sample)) +
+  geom_point(size = 3) +                         
+  geom_line(aes(group = Sample), color = "gray", alpha = 0.5) + 
+  scale_color_manual(values = c("#2F8AC4","#E48725"), labels = c("Active" = "TB Disease", "Latent" = "TB Infection")) +
+  facet_wrap(~Protein, scales = "free_y") +  
+  theme_minimal()+
+  labs(x = "Anticoagulant", y = "NPX", color = "") +
+  theme(axis.text.x = element_text(size = 9,angle=0),  # Increase size of x-axis text
+    axis.text.y = element_text(size = 9),
+    axis.title.y = element_text(size=12),
+    panel.background = element_rect(fill = "white", color = NA),  
+    plot.background = element_rect(fill = "white", color = NA),  
+    panel.grid.major = element_blank(),  
+    panel.grid.minor = element_blank(),
+    panel.border = element_rect(color = "black", fill = NA)
+    )+
+  stat_pvalue_manual(
+    p_values, 
+    label = "p_label", 
+    y.position = max(input_data$NPX, na.rm = TRUE) * 1.05
+  )
+Fig5_scatterplot_markers
+```
+
+# Visulizing correlation between EDTA and Heparin for GSEA results {.tabset}
+
+## 12-marker
+
+```{r}
+l=load("../Results/GSEA/12-marker.RData")
+GSE_results_edta$SampleID <- gsub(".e","",GSE_results_edta$SampleID)
+
+GSE_results_TB_sweden <- GSE_results_TB_sweden%>%
+  mutate(SampleID=gsub("\\.0","",SampleID))
+
+input_data <- merge(GSE_results_edta,GSE_results_TB_sweden,by="SampleID")
+colnames(input_data) <- c("SampleID","Score_EDTA","Type_EDTA","Score_heparin","Type_heparin","Grp1","Grp2")
+
+Fig5_correlationplot <- scatterplot_func2(input_data,"Score_EDTA","Score_heparin","Type_heparin","EDTA","Heparin")+
+  ggtitle("12-marker signature")
+Fig5_correlationplot
+```
+
+## 6-marker
+
+```{r}
+l=load("../Results/GSEA/6-marker.RData")
+GSE_results_edta$SampleID <- gsub(".e","",GSE_results_edta$SampleID)
+
+GSE_results_TB_sweden <- GSE_results_TB_sweden%>%
+  mutate(SampleID=gsub("\\.0","",SampleID))
+
+input_data <- merge(GSE_results_edta,GSE_results_TB_sweden,by="SampleID")
+colnames(input_data) <- c("SampleID","Score_EDTA","Type_EDTA","Score_heparin","Type_heparin")
+
+Fig5_correlationplot_B <- scatterplot_func2(input_data,"Score_EDTA","Score_heparin","Type_heparin","EDTA","Heparin")+
+  ggtitle("6-marker signature")
+Fig5_correlationplot_B
+```
+
+## 4-marker-1
+
+```{r}
+l=load("../Results/GSEA/4-marker-1.RData")
+GSE_results_edta$SampleID <- gsub(".e","",GSE_results_edta$SampleID)
+
+GSE_results_TB_sweden <- GSE_results_TB_sweden%>%
+  mutate(SampleID=gsub("\\.0","",SampleID))
+
+input_data <- merge(GSE_results_edta,GSE_results_TB_sweden,by="SampleID")
+colnames(input_data) <- c("SampleID","Score_EDTA","Type_EDTA","Score_heparin","Type_heparin")
+
+Fig5_correlationplot_E <- scatterplot_func2(input_data,"Score_EDTA","Score_heparin","Type_EDTA","EDTA","Heparin")+
+  ggtitle("4-marker signature")
+Fig5_correlationplot_E
+```
+
+## 4-marker-2
+
+```{r}
+l=load("../Results/GSEA/4-marker-2.RData")
+GSE_results_edta$SampleID <- gsub(".e","",GSE_results_edta$SampleID)
+
+GSE_results_TB_sweden <- GSE_results_TB_sweden%>%
+  mutate(SampleID=gsub("\\.0","",SampleID))
+
+input_data <- merge(GSE_results_edta,GSE_results_TB_sweden,by="SampleID")
+colnames(input_data) <- c("SampleID","Score_EDTA","Type_EDTA","Score_heparin","Type_heparin")
+
+Fig5_correlationplot_F <- scatterplot_func2(input_data,"Score_EDTA","Score_heparin","Type_EDTA","EDTA","Heparin")+
+  ggtitle("4-marker signature")
+Fig5_correlationplot_F
+```
+
+## 4-marker-3
+
+```{r}
+l=load("../Results/GSEA/4-marker-3.RData")
+GSE_results_edta$SampleID <- gsub(".e","",GSE_results_edta$SampleID)
+
+GSE_results_TB_sweden <- GSE_results_TB_sweden%>%
+  mutate(SampleID=gsub("\\.0","",SampleID))
+
+input_data <- merge(GSE_results_edta,GSE_results_TB_sweden,by="SampleID")
+colnames(input_data) <- c("SampleID","Score_EDTA","Type_EDTA","Score_heparin","Type_heparin")
+
+Fig5_correlationplot_M <- scatterplot_func2(input_data,"Score_EDTA","Score_heparin","Type_EDTA","EDTA","Heparin")+
+  ggtitle("4-marker signature")
+Fig5_correlationplot_M
+```
+
+# Correlation between clinical blood markers and enrichment score {.tabset}
+
+## CRP
+
+### Which signature? {.tabset}
+
+#### 12-marker
+
+```{r}
+l=load("../Results/Swedish_Clinical_Table.RData")
+l=load("../Results/GSEA/12-marker.RData")
+
+GSE_results_TB_sweden <- GSE_results_TB_sweden%>%
+  mutate(SampleID=gsub("\\.0","",SampleID))
+
+CRP_Table <- finalTable%>%
+  filter(!is.na(CRP))
+CRP_Table <- CRP_Table%>% 
+  rename("SampleID" = "sample_id")
+
+CRP_Table <- CRP_Table%>%
+  left_join(GSE_results_TB_sweden,by = "SampleID")
+
+CRP_Table <- CRP_Table%>%
+  filter(Type!="Control")
+
+correlationplot_CRP_A <- scatterplot_func2(CRP_Table,"Score","CRP","Type","Enrichment score","CRP")
+```
+
+#### 6-marker
+
+```{r}
+load("../Results/Swedish_Clinical_Table.RData")
+l=load("../Results/GSEA/6-marker.RData")
+
+GSE_results_TB_sweden <- GSE_results_TB_sweden%>%
+  mutate(SampleID=gsub("\\.0","",SampleID))
+
+CRP_Table <- finalTable%>%
+  filter(!is.na(CRP))
+CRP_Table <- CRP_Table%>% 
+  rename("SampleID" = "sample_id")
+
+CRP_Table <- CRP_Table%>%
+  left_join(GSE_results_TB_sweden,by = "SampleID")
+
+CRP_Table <- CRP_Table%>%
+  filter(Type!="Control")
+
+correlationplot_CRP_B <- scatterplot_func2(CRP_Table,"Score","CRP","Type","Enrichment score","CRP")
+```
+
+#### 4-marker
+
+```{r}
+load("../Results/Swedish_Clinical_Table.RData")
+l=load("../Results/GSEA/4-marker-2.RData")
+
+GSE_results_TB_sweden <- GSE_results_TB_sweden%>%
+  mutate(SampleID=gsub("\\.0","",SampleID))
+
+CRP_Table <- finalTable%>%
+  filter(!is.na(CRP))
+CRP_Table <- CRP_Table%>% 
+  rename("SampleID" = "sample_id")
+
+CRP_Table <- CRP_Table%>%
+  left_join(GSE_results_TB_sweden,by = "SampleID")
+
+CRP_Table <- CRP_Table%>%
+  filter(Type!="Control")
+
+correlationplot_CRP_C <- scatterplot_func2(CRP_Table,"Score","CRP","Type","Enrichment score","CRP")
+```
+
+
+## ESR
+
+### Which signature? {.tabset}
+
+#### 12-marker
+
+```{r}
+load("../Results/Swedish_Clinical_Table.RData")
+l=load("../Results/GSEA/12-marker.RData")
+
+GSE_results_TB_sweden <- GSE_results_TB_sweden%>%
+  mutate(SampleID=gsub("\\.0","",SampleID))
+
+ESR_Table <- finalTable%>%
+  filter(!is.na(ESR))
+ESR_Table <- ESR_Table%>% 
+  rename("SampleID" = "sample_id")
+
+ESR_Table <- ESR_Table%>%
+  left_join(GSE_results_TB_sweden,by = "SampleID")
+
+ESR_Table <- ESR_Table%>%
+  filter(Type!="Control")
+
+correlationplot_ESR_A <- scatterplot_func2(ESR_Table,"Score","ESR","Type","Enrichment score","ESR")
+```
+
+#### 6-marker
+
+```{r}
+load("../Results/Swedish_Clinical_Table.RData")
+l=load("../Results/GSEA/6-marker.RData")
+
+GSE_results_TB_sweden <- GSE_results_TB_sweden%>%
+  mutate(SampleID=gsub("\\.0","",SampleID))
+
+ESR_Table <- finalTable%>%
+  filter(!is.na(ESR))
+ESR_Table <- ESR_Table%>% 
+  rename("SampleID" = "sample_id")
+
+ESR_Table <- ESR_Table%>%
+  left_join(GSE_results_TB_sweden,by = "SampleID")
+
+ESR_Table <- ESR_Table%>%
+  filter(Type!="Control")
+
+correlationplot_ESR_B <- scatterplot_func2(ESR_Table,"Score","ESR","Type","Enrichment score","ESR")
+```
+
+#### 4-marker
+
+```{r}
+load("../Results/Swedish_Clinical_Table.RData")
+l=load("../Results/GSEA/4-marker-2.RData")
+
+GSE_results_TB_sweden <- GSE_results_TB_sweden%>%
+  mutate(SampleID=gsub("\\.0","",SampleID))
+
+ESR_Table <- finalTable%>%
+  filter(!is.na(ESR))
+ESR_Table <- ESR_Table%>% 
+  rename("SampleID" = "sample_id")
+
+ESR_Table <- ESR_Table%>%
+  left_join(GSE_results_TB_sweden,by = "SampleID")
+
+ESR_Table <- ESR_Table%>%
+  filter(Type!="Control")
+
+correlationplot_ESR_C <- scatterplot_func2(ESR_Table,"Score","ESR","Type","Enrichment score","ESR")
+```
+
+## WBC
+
+### Which signature? {.tabset}
+
+#### 12-marker
+
+```{r}
+load("../Results/Swedish_Clinical_Table.RData")
+l=load("../Results/GSEA/12-marker.RData")
+
+GSE_results_TB_sweden <- GSE_results_TB_sweden%>%
+  mutate(SampleID=gsub("\\.0","",SampleID))
+
+WBC_Table <- finalTable%>%
+  filter(!is.na(WBC))
+WBC_Table <- WBC_Table%>% 
+  rename("SampleID" = "sample_id")
+
+WBC_Table <- WBC_Table%>%
+  left_join(GSE_results_TB_sweden,by = "SampleID")
+
+WBC_Table <- WBC_Table%>%
+  filter(Type!="Control")
+
+correlationplot_WBC_A <- scatterplot_func2(WBC_Table,"Score","WBC","Type","Enrichment score","WBC")
+```
+
+#### 6-marker
+
+```{r}
+load("../Results/Swedish_Clinical_Table.RData")
+l=load("../Results/GSEA/6-marker.RData")
+
+GSE_results_TB_sweden <- GSE_results_TB_sweden%>%
+  mutate(SampleID=gsub("\\.0","",SampleID))
+
+WBC_Table <- finalTable%>%
+  filter(!is.na(WBC))
+WBC_Table <- WBC_Table%>% 
+  rename("SampleID" = "sample_id")
+
+WBC_Table <- WBC_Table%>%
+  left_join(GSE_results_TB_sweden,by = "SampleID")
+
+WBC_Table <- WBC_Table%>%
+  filter(Type!="Control")
+
+correlationplot_WBC_B <- scatterplot_func2(WBC_Table,"Score","WBC","Type","Enrichment score","WBC")
+```
+
+#### 4-marker
+
+```{r}
+load("../Results/Swedish_Clinical_Table.RData")
+l=load("../Results/GSEA/4-marker-2.RData")
+
+GSE_results_TB_sweden <- GSE_results_TB_sweden%>%
+  mutate(SampleID=gsub("\\.0","",SampleID))
+
+WBC_Table <- finalTable%>%
+  filter(!is.na(WBC))
+WBC_Table <- WBC_Table%>% 
+  rename("SampleID" = "sample_id")
+
+WBC_Table <- WBC_Table%>%
+  left_join(GSE_results_TB_sweden,by = "SampleID")
+
+WBC_Table <- WBC_Table%>%
+  filter(Type!="Control")
+
+correlationplot_WBC_C <- scatterplot_func2(WBC_Table,"Score","WBC","Type","Enrichment score","WBC")
+```
+
+## HB
+
+### Which signature? {.tabset}
+
+#### 12-marker
+
+```{r}
+load("../Results/Swedish_Clinical_Table.RData")
+l=load("../Results/GSEA/12-marker.RData")
+
+GSE_results_TB_sweden <- GSE_results_TB_sweden%>%
+  mutate(SampleID=gsub("\\.0","",SampleID))
+
+HB_Table <- finalTable%>%
+  filter(!is.na(HB))
+HB_Table <- HB_Table%>% 
+  rename("SampleID" = "sample_id")
+
+HB_Table <- HB_Table%>%
+  left_join(GSE_results_TB_sweden,by = "SampleID")
+
+HB_Table <- HB_Table%>%
+  filter(Type!="Control")
+
+correlationplot_HB_A <- scatterplot_func2(HB_Table,"Score","HB","Type","Enrichment score","HB")
+```
+
+#### 6-marker
+
+```{r}
+load("../Results/Swedish_Clinical_Table.RData")
+l=load("../Results/GSEA/6-marker.RData")
+
+GSE_results_TB_sweden <- GSE_results_TB_sweden%>%
+  mutate(SampleID=gsub("\\.0","",SampleID))
+
+HB_Table <- finalTable%>%
+  filter(!is.na(HB))
+HB_Table <- HB_Table%>% 
+  rename("SampleID" = "sample_id")
+
+HB_Table <- HB_Table%>%
+  left_join(GSE_results_TB_sweden,by = "SampleID")
+
+HB_Table <- HB_Table%>%
+  filter(Type!="Control")
+
+correlationplot_HB_B <- scatterplot_func2(HB_Table,"Score","HB","Type","Enrichment score","HB")
+```
+
+#### 4-marker
+
+```{r}
+load("../Results/Swedish_Clinical_Table.RData")
+l=load("../Results/GSEA/4-marker-2.RData")
+
+GSE_results_TB_sweden <- GSE_results_TB_sweden%>%
+  mutate(SampleID=gsub("\\.0","",SampleID))
+
+HB_Table <- finalTable%>%
+  filter(!is.na(HB))
+HB_Table <- HB_Table%>% 
+  rename("SampleID" = "sample_id")
+
+HB_Table <- HB_Table%>%
+  left_join(GSE_results_TB_sweden,by = "SampleID")
+
+HB_Table <- HB_Table%>%
+  filter(Type!="Control")
+
+correlationplot_HB_C <- scatterplot_func2(HB_Table,"Score","HB","Type","Enrichment score","HB")
+```
+
+## ALB
+
+### Which signature? {.tabset}
+
+#### 12-marker
+
+```{r}
+load("../Results/Swedish_Clinical_Table.RData")
+l=load("../Results/GSEA/12-marker.RData")
+
+GSE_results_TB_sweden <- GSE_results_TB_sweden%>%
+  mutate(SampleID=gsub("\\.0","",SampleID))
+
+ALB_Table <- finalTable%>%
+  filter(!is.na(ALB))
+ALB_Table <- ALB_Table%>% 
+  rename("SampleID" = "sample_id")
+
+ALB_Table <- ALB_Table%>%
+  left_join(GSE_results_TB_sweden,by = "SampleID")
+
+ALB_Table <- ALB_Table%>%
+  filter(Type!="Control")
+
+correlationplot_ALB_A <- scatterplot_func2(ALB_Table,"Score","ALB","Type","Enrichment score","ALB")
+```
+
+#### 6-marker
+
+```{r}
+load("../Results/Swedish_Clinical_Table.RData")
+l=load("../Results/GSEA/6-marker.RData")
+
+GSE_results_TB_sweden <- GSE_results_TB_sweden%>%
+  mutate(SampleID=gsub("\\.0","",SampleID))
+
+ALB_Table <- finalTable%>%
+  filter(!is.na(ALB))
+ALB_Table <- ALB_Table%>% 
+  rename("SampleID" = "sample_id")
+
+ALB_Table <- ALB_Table%>%
+  left_join(GSE_results_TB_sweden,by = "SampleID")
+
+ALB_Table <- ALB_Table%>%
+  filter(Type!="Control")
+
+correlationplot_ALB_B <- scatterplot_func2(ALB_Table,"Score","ALB","Type","Enrichment score","ALB")
+```
+
+#### 4-marker
+
+```{r}
+load("../Results/Swedish_Clinical_Table.RData")
+l=load("../Results/GSEA/4-marker-2.RData")
+
+GSE_results_TB_sweden <- GSE_results_TB_sweden%>%
+  mutate(SampleID=gsub("\\.0","",SampleID))
+
+ALB_Table <- finalTable%>%
+  filter(!is.na(ALB))
+ALB_Table <- ALB_Table%>% 
+  rename("SampleID" = "sample_id")
+
+ALB_Table <- ALB_Table%>%
+  left_join(GSE_results_TB_sweden,by = "SampleID")
+
+ALB_Table <- ALB_Table%>%
+  filter(Type!="Control")
+
+correlationplot_ALB_C <- scatterplot_func2(ALB_Table,"Score","ALB","Type","Enrichment score","ALB")
+```
+
+# Save data
+
+```{r}
+save(Fig5_correlationplot_markers,Fig5_correlationplot,Fig5_correlationplot_B,Fig5_correlationplot_E,Fig5_correlationplot_F,Fig5_correlationplot_M,file="../Results/Figures/Fig5_correlationplot.RData")
+save(correlationplot_CRP_A,correlationplot_CRP_B,correlationplot_CRP_C,correlationplot_ALB_A,correlationplot_ALB_B,correlationplot_ALB_C,correlationplot_HB_A,correlationplot_HB_B,correlationplot_HB_C,correlationplot_WBC_A,correlationplot_WBC_B,correlationplot_WBC_C,correlationplot_ESR_A,correlationplot_ESR_B,correlationplot_ESR_C,file="../Results/Figures/Fig7_correlationplot.RData")
+```
+

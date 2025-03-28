@@ -1,0 +1,78 @@
+---
+title: "New Olink Study"
+author: "Zaynab Mousavian"
+date: "5 August 2024"
+output:
+  html_document: default
+  pdf_document: default
+subtitle: Feature selection with Boruta
+---
+
+```{r setup, include=FALSE}
+# Set global options for all chunks
+knitr::opts_chunk$set(
+  message = FALSE,
+  warning = FALSE
+)
+```
+
+
+# Loading R packages
+
+```{r}
+library(Boruta)
+library(dplyr)
+```
+
+# Loading 12-marker signature
+
+```{r}
+load(file="../Data/ReadyData/generated for iScience/0.3-pearson-modules.RData")
+module="turquoise"
+column = match(module, modNames);
+moduleGenes = modules [[column]]
+moduleGenes=moduleGenes[-c(6,8,12,14)]
+signature1 <- moduleGenes
+```
+
+# Which data? {.tabset}
+
+## discovery data with filtering proteins
+
+### Make data
+
+```{r}
+l=load("../Data/ReadyData/AllDatasets-Samples.RData")
+l=load("../Data/ReadyData/ReadyData-discovery.RData")
+dat_Expr <- olink %>%as.data.frame()
+groups <- samples_first[match(row.names(dat_Expr),samples_first$SampleID),"modifiedType",drop=TRUE]
+
+data <- dat_Expr%>%
+  select(moduleGenes)%>%
+  mutate(Class=groups)
+
+data <- data%>%
+  filter(Class%in%c("Active","Latent"))
+  
+data$Class <- factor(data$Class, levels = c("Active","Latent"))
+```
+
+### Run boruta
+
+```{r}
+set.seed(123)
+boruta.data <- Boruta(Class~., data = data, doTrace = 2,maxRuns=500)
+print(boruta.data)
+pdf("../Results/Figures/Manuscript/Boruta.pdf")
+plot(boruta.data, xlab = "", xaxt = "n")
+lz<-lapply(1:ncol(boruta.data$ImpHistory),function(i)
+boruta.data$ImpHistory[is.finite(boruta.data$ImpHistory[,i]),i])
+names(lz) <- colnames(boruta.data$ImpHistory)
+Labels <- sort(sapply(lz,median))
+axis(side = 1,las=2,labels = names(Labels),
+at = 1:ncol(boruta.data$ImpHistory), cex.axis = 0.7)
+dev.off()
+signature2 <- getSelectedAttributes(boruta.data, withTentative = F)
+save(signature1, signature2, file="../Data/ReadyData/signatures.RData")
+```
+

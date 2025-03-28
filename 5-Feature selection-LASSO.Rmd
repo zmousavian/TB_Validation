@@ -1,0 +1,105 @@
+---
+title: "New Olink Study"
+author: "Zaynab Mousavian"
+date: "21 August 2024"
+output:
+  html_document: default
+  pdf_document: default
+subtitle: LASSO
+---
+
+```{r setup, include=FALSE}
+# Set global options for all chunks
+knitr::opts_chunk$set(
+  message = FALSE,
+  warning = FALSE
+)
+```
+
+# Load R packages
+
+```{r message=FALSE, warning=FALSE}
+library(dplyr)
+library(ggplot2)
+library(multiview)
+library(tidyr)
+library(tidyverse)
+library(caret)
+library(pROC)
+library(patchwork)
+library(glmnet)
+```
+
+
+# Load data 
+
+```{r}
+moduleGenes=c("IL6","CDCP1","IFN-gamma","CXCL9","MCP-3","VEGFA")
+```
+
+
+# Load discovery data
+
+```{r message=FALSE, warning=FALSE}
+l=load("../Data/ReadyData/AllDatasets-Samples.RData")
+l=load("../Data/ReadyData-withoutFilteringProteins/ReadyData-discovery.RData")
+dat_Expr <- olink %>%as.data.frame()
+groups <- samples_first[match(row.names(dat_Expr),samples_first$SampleID),"modifiedType",drop=TRUE]
+
+first_dataset <- dat_Expr%>%as.data.frame()
+first_dataset <- first_dataset%>%
+  select(moduleGenes)%>%
+  mutate(Class=groups)
+```
+
+# Make train data  
+
+```{r}
+first_dataset_filtered <- first_dataset%>%
+  filter(Class%in%c("Active","Latent"))
+
+first_dataset_filtered$Class <- factor(first_dataset_filtered$Class, levels = c("Active","Latent"))
+data <- first_dataset_filtered
+
+X_train <- as.matrix(data%>%select(-Class))  
+y_train <- data$Class  
+```
+
+# Build Lasso model
+
+```{r}
+set.seed(123)
+lasso_model <- cv.glmnet(X_train, y_train, alpha = 1, family = "binomial",type.measure = "auc",nfolds = 5)
+```
+
+# Print Lasso model
+
+```{r}
+pdf("../Results/Figures/Manuscript/LASSO.pdf")
+plot(lasso_model)
+dev.off()
+```
+
+```{r}
+coef(lasso_model, s = "lambda.min")
+coef(lasso_model, s = "lambda.1se")
+```
+
+```{r}
+coef_selected <- coef(lasso_model, s = "lambda.1se")
+
+
+coef_df <- as.data.frame(as.matrix(coef_selected))
+coef_df$Feature <- rownames(coef_df)
+coef_df$Coefficient <- coef_df$s1
+coef_df <- coef_df[-1,]  
+coef_df <- coef_df[coef_df$Coefficient != 0, ]  
+
+# Visualize the selected features
+ggplot(coef_df, aes(x = reorder(Feature, Coefficient), y = Coefficient)) +
+  geom_bar(stat = "identity") +
+  coord_flip() +
+  theme_minimal() +
+  labs(title = "Selected Features by Lasso", x = "Feature", y = "Coefficient")
+```
+

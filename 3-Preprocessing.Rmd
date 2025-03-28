@@ -1,0 +1,896 @@
+---
+title: "New Olink Study"
+author: "Zaynab Mousavian"
+date: "3 June 2024"
+output:
+  html_document: default
+  pdf_document: default
+subtitle: Olink preprocessing
+---
+
+```{r setup, include=FALSE}
+# Set global options for all chunks
+knitr::opts_chunk$set(
+  message = FALSE,
+  warning = FALSE
+)
+```
+
+# Loading R packages
+
+```{r}
+library(OlinkAnalyze)
+library(readxl)
+library(dplyr)
+library(reshape2)
+library(ggplot2)
+library(RColorBrewer)
+```
+
+# Read samples information
+
+```{r}
+l=load("../Data/ReadyData/AllDatasets-NPX.RData")
+l=load("../Data/ReadyData/AllDatasets-Samples.RData")
+```
+
+# Which protein data? {.tabset}
+
+## discovery
+
+### Read protein data 
+
+```{r}
+npx_data_first_sweden%>%
+  glimpse()
+  
+```
+
+### Convert protein data from long to wide format
+
+```{r}
+olink <- npx_data_first_sweden %>%
+  select(SampleID,Assay,NPX)
+olink <- dcast(olink, SampleID ~ factor(Assay, levels = unique(olink$Assay)), 
+               fun.aggregate=function(i) mean(i, na.rm=TRUE))
+
+rownames(olink) <- olink$SampleID
+olink <- olink%>%
+  select(-SampleID)
+```
+### Filtering proteins 
+
+```{r message=FALSE}
+percentage <- 0.3
+cutoff <- nrow(olink)*percentage
+nSamples <- nrow(olink)
+# Get LOD; since LOD varies between panels, collect individual LOD per protein then average them out
+LOD <- npx_data_third_edta%>%
+  select(Assay,Panel_Version,LOD)
+unique(LOD$Panel_Version)
+LOD <- as.data.frame(LOD[!duplicated(LOD$Assay),])
+LOD <- LOD%>%select(-Panel_Version)
+LOD$Assay <- as.character(LOD$Assay)
+rownames(LOD) <- LOD$Assay
+identical(LOD$Assay,colnames(olink)) #TRUE
+# Add LOD to olink df
+olink <- as.data.frame(t(olink))
+olink <- merge(olink, LOD[,2, drop=FALSE], by="row.names", all = TRUE)
+rownames(olink) <- olink$Row.names
+olink$Row.names <- NULL
+colnames(olink)[nSamples+1] <- "LOD"
+# Detect number of samples with limit of detection (LOD)
+num_LOD <- as.data.frame(apply(olink, 1, function(x) length(which(x[1:nSamples] <= x[nSamples+1])) ))
+olink <- merge(olink, num_LOD, by="row.names")
+rownames(olink) <- olink$Row.names
+olink <- olink[,-1]
+colnames(olink)[nSamples+2] <- "n_LOD"
+olink <- olink[,-(nSamples+1)] #remove LOD
+olink <- as.data.frame(t(olink))
+
+# Remove proteins from analysis where more than 30% of samples have NPX values less than LOD 
+filteredProteins <- which(olink[nSamples+1,] > cutoff)
+filteredOlink <- olink[-(nSamples+1),filteredProteins]
+filteredOlink <- cbind(filteredOlink,samples_first[match(row.names(filteredOlink),samples_first$SampleID),"modifiedType"])
+filteredOlink$sample <- row.names(filteredOlink)
+inputData <- melt(filteredOlink,id=c("sample","modifiedType"))
+names(inputData) <- c("Samples", "Groups", "Proteins", "NPX")
+inputData$Groups <- factor(inputData$Groups, levels = unique(samples_first$modifiedType))
+colors <- brewer.pal(9, "Set3")
+
+ggplot(inputData,aes(x=Proteins,y=NPX,fill=Groups))+
+  geom_boxplot(aes(middle=mean(NPX)),fatten=1,outlier.size = 0.5)+
+  scale_fill_manual(values = c("#2F8AC4", "#E48725", "#A5AA99"),labels = c("Active" = "TB Disease","Latent" = "TB Infection","Control"="IGRA- Contact"))+
+  facet_wrap(~Proteins, scale="free",ncol=7)+
+  theme(axis.text=element_text(size=6),
+        axis.text.x=element_blank(),
+        axis.title = element_text(size=7,face="bold"),
+        strip.text = element_text(size=7),
+        legend.title = element_blank(), 
+        legend.text = element_text(size=7))
+
+# Remaining proteins with less than 30% of samples have NPX values less than LOD 
+remainingProteins <- which(olink[nSamples+1,] <= cutoff)
+filteredOlink <- olink[-(nSamples+1),remainingProteins]
+filteredOlink <- cbind(filteredOlink,samples_first[match(row.names(filteredOlink),samples_first$SampleID),"modifiedType"])
+filteredOlink$sample <- row.names(filteredOlink)
+inputData <- melt(filteredOlink,id=c("sample","modifiedType"))
+names(inputData) <- c("Samples", "Groups", "Proteins", "NPX")
+inputData$Groups <- factor(inputData$Groups, levels = unique(samples_first$modifiedType))
+
+ggplot(inputData,aes(x=Proteins,y=NPX,fill=Groups))+
+  geom_boxplot(aes(middle=mean(NPX)),fatten=1,outlier.size = 0.5)+
+  scale_fill_manual(values = c("#2F8AC4", "#E48725", "#A5AA99"),labels = c("Active" = "TB Disease","Latent" = "TB Infection","Control"="IGRA- Contact"))+
+  facet_wrap(~Proteins, scale="free",ncol=8)+
+  theme(axis.text=element_text(size=6),
+        axis.text.x=element_blank(),
+        axis.title = element_text(size=7,face="bold"),
+        strip.text = element_text(size=7),
+        legend.title = element_blank(), 
+        legend.text = element_text(size=7))
+
+olink <- olink[,-filteredProteins] # 
+olink <- olink[-(nSamples+1),] #remove lod_n info
+```
+
+
+### Save protein data
+
+```{r}
+save(olink,file="../Data/ReadyData/ReadyData-discovery.RData")
+```
+
+
+
+
+## Portugal
+
+### Read protein data 
+
+```{r}
+npx_data_first_portugal%>%
+  glimpse()
+  
+```
+
+### Convert protein data from long to wide format
+
+```{r}
+olink <- npx_data_first_portugal %>%
+  select(SampleID,Assay,NPX)
+olink <- dcast(olink, SampleID ~ factor(Assay, levels = unique(olink$Assay)), 
+               fun.aggregate=function(i) mean(i, na.rm=TRUE))
+
+rownames(olink) <- olink$SampleID
+olink <- olink%>%
+  select(-SampleID)
+```
+### Filtering proteins 
+
+```{r message=FALSE}
+percentage <- 0.3
+cutoff <- nrow(olink)*percentage
+nSamples <- nrow(olink)
+# Get LOD; since LOD varies between panels, collect individual LOD per protein then average them out
+LOD <- npx_data_third_edta%>%
+  select(Assay,Panel_Version,LOD)
+unique(LOD$Panel_Version)
+LOD <- as.data.frame(LOD[!duplicated(LOD$Assay),])
+LOD <- LOD%>%select(-Panel_Version)
+LOD$Assay <- as.character(LOD$Assay)
+rownames(LOD) <- LOD$Assay
+identical(LOD$Assay,colnames(olink)) #TRUE
+# Add LOD to olink df
+olink <- as.data.frame(t(olink))
+olink <- merge(olink, LOD[,2, drop=FALSE], by="row.names", all = TRUE)
+rownames(olink) <- olink$Row.names
+olink$Row.names <- NULL
+colnames(olink)[nSamples+1] <- "LOD"
+# Detect number of samples with limit of detection (LOD)
+num_LOD <- as.data.frame(apply(olink, 1, function(x) length(which(x[1:nSamples] <= x[nSamples+1])) ))
+olink <- merge(olink, num_LOD, by="row.names")
+rownames(olink) <- olink$Row.names
+olink <- olink[,-1]
+colnames(olink)[nSamples+2] <- "n_LOD"
+olink <- olink[,-(nSamples+1)] #remove LOD
+olink <- as.data.frame(t(olink))
+
+# Remove proteins from analysis where more than 30% of samples have NPX values less than LOD 
+filteredProteins <- which(olink[nSamples+1,] > cutoff)
+filteredOlink <- olink[-(nSamples+1),filteredProteins]
+filteredOlink <- cbind(filteredOlink,samples_first[match(row.names(filteredOlink),samples_first$SampleID),"modifiedType"])
+filteredOlink$sample <- row.names(filteredOlink)
+inputData <- melt(filteredOlink,id=c("sample","modifiedType"))
+names(inputData) <- c("Samples", "Groups", "Proteins", "NPX")
+inputData$Groups <- factor(inputData$Groups, levels = unique(samples_first$modifiedType))
+colors <- brewer.pal(9, "Set3")
+# If you need more than the maximu
+# pdf(file=paste0(resultsDirectory,"Figure S1-edta.pdf"))
+ggplot(inputData,aes(x=Proteins,y=NPX,fill=Groups))+
+  geom_boxplot(aes(middle=mean(NPX)),fatten=1,outlier.size = 0.5)+
+  scale_fill_manual(values = c("#2F8AC4", "#E48725", "#A5AA99"),labels = c("Active" = "TB Disease","Latent" = "TB Infection","Control"="IGRA- Contact"))+
+  facet_wrap(~Proteins, scale="free",ncol=7)+
+  theme(axis.text=element_text(size=6),
+        axis.text.x=element_blank(),
+        axis.title = element_text(size=7,face="bold"),
+        strip.text = element_text(size=7),
+        legend.title = element_blank(), 
+        legend.text = element_text(size=7))
+# dev.off()
+
+# Remaining proteins with less than 30% of samples have NPX values less than LOD 
+remainingProteins <- which(olink[nSamples+1,] <= cutoff)
+filteredOlink <- olink[-(nSamples+1),remainingProteins]
+filteredOlink <- cbind(filteredOlink,samples_first[match(row.names(filteredOlink),samples_first$SampleID),"modifiedType"])
+filteredOlink$sample <- row.names(filteredOlink)
+inputData <- melt(filteredOlink,id=c("sample","modifiedType"))
+names(inputData) <- c("Samples", "Groups", "Proteins", "NPX")
+inputData$Groups <- factor(inputData$Groups, levels = unique(samples_first$modifiedType))
+#pdf(file=paste0(resultsDirectory,"Figure S2-edta.pdf"))
+ggplot(inputData,aes(x=Proteins,y=NPX,fill=Groups))+
+  geom_boxplot(aes(middle=mean(NPX)),fatten=1,outlier.size = 0.5)+
+  scale_fill_manual(values = c("#2F8AC4", "#E48725", "#A5AA99"),labels = c("Active" = "TB Disease","Latent" = "TB Infection","Control"="IGRA- Contact"))+
+  facet_wrap(~Proteins, scale="free",ncol=8)+
+  theme(axis.text=element_text(size=6),
+        axis.text.x=element_blank(),
+        axis.title = element_text(size=7,face="bold"),
+        strip.text = element_text(size=7),
+        legend.title = element_blank(), 
+        legend.text = element_text(size=7))
+#dev.off()
+
+olink <- olink[,-filteredProteins] # 
+olink <- olink[-(nSamples+1),] #remove lod_n info
+```
+
+
+### Save protein data
+
+```{r}
+save(olink,file="../Data/ReadyData/ReadyData-Portugal.RData")
+```
+
+
+
+
+## Edta
+
+### Read protein data 
+
+```{r}
+npx_data_third_edta%>%
+  glimpse()
+  
+```
+
+### Convert protein data from long to wide format
+
+```{r}
+olink <- npx_data_third_edta %>%
+  select(SampleID,Assay,NPX)
+olink <- dcast(olink, SampleID ~ factor(Assay, levels = unique(olink$Assay)), 
+               fun.aggregate=function(i) mean(i, na.rm=TRUE))
+
+rownames(olink) <- olink$SampleID
+olink <- olink%>%
+  select(-SampleID)
+```
+### Filtering proteins 
+
+```{r message=FALSE}
+percentage <- 0.3
+cutoff <- nrow(olink)*percentage
+nSamples <- nrow(olink)
+# Get LOD; since LOD varies between panels, collect individual LOD per protein then average them out
+LOD <- npx_data_third_edta%>%
+  select(Assay,Panel_Version,LOD)
+unique(LOD$Panel_Version)
+LOD <- as.data.frame(LOD[!duplicated(LOD$Assay),])
+LOD <- LOD%>%select(-Panel_Version)
+LOD$Assay <- as.character(LOD$Assay)
+rownames(LOD) <- LOD$Assay
+identical(LOD$Assay,colnames(olink)) #TRUE
+# Add LOD to olink df
+olink <- as.data.frame(t(olink))
+olink <- merge(olink, LOD[,2, drop=FALSE], by="row.names", all = TRUE)
+rownames(olink) <- olink$Row.names
+olink$Row.names <- NULL
+colnames(olink)[nSamples+1] <- "LOD"
+# Detect number of samples with limit of detection (LOD)
+num_LOD <- as.data.frame(apply(olink, 1, function(x) length(which(x[1:nSamples] <= x[nSamples+1])) ))
+olink <- merge(olink, num_LOD, by="row.names")
+rownames(olink) <- olink$Row.names
+olink <- olink[,-1]
+colnames(olink)[nSamples+2] <- "n_LOD"
+olink <- olink[,-(nSamples+1)] #remove LOD
+olink <- as.data.frame(t(olink))
+
+# Remove proteins from analysis where more than 30% of samples have NPX values less than LOD 
+filteredProteins <- which(olink[nSamples+1,] > cutoff)
+filteredOlink <- olink[-(nSamples+1),filteredProteins]
+filteredOlink <- cbind(filteredOlink,samples_third[match(row.names(filteredOlink),samples_third$SampleID),"modifiedType"])
+filteredOlink$sample <- row.names(filteredOlink)
+inputData <- melt(filteredOlink,id=c("sample","modifiedType"))
+names(inputData) <- c("Samples", "Groups", "Proteins", "NPX")
+inputData$Groups <- factor(inputData$Groups, levels = unique(samples_third$modifiedType))
+colors <- brewer.pal(9, "Set3")
+# If you need more than the maximu
+# pdf(file=paste0(resultsDirectory,"Figure S1-edta.pdf"))
+ggplot(inputData,aes(x=Proteins,y=NPX,fill=Groups))+
+  geom_boxplot(aes(middle=mean(NPX)),fatten=1,outlier.size = 0.5)+
+  scale_fill_manual(values = c("#2F8AC4", "#E48725", "#A5AA99"),labels = c("Active" = "TB Disease","Latent" = "TB Infection","Control"="IGRA- Contact"))+
+  facet_wrap(~Proteins, scale="free",ncol=7)+
+  theme(axis.text=element_text(size=6),
+        axis.text.x=element_blank(),
+        axis.title = element_text(size=7,face="bold"),
+        strip.text = element_text(size=7),
+        legend.title = element_blank(), 
+        legend.text = element_text(size=7))
+# dev.off()
+
+# Remaining proteins with less than 30% of samples have NPX values less than LOD 
+remainingProteins <- which(olink[nSamples+1,] <= cutoff)
+filteredOlink <- olink[-(nSamples+1),remainingProteins]
+filteredOlink <- cbind(filteredOlink,samples_third[match(row.names(filteredOlink),samples_third$SampleID),"modifiedType"])
+filteredOlink$sample <- row.names(filteredOlink)
+inputData <- melt(filteredOlink,id=c("sample","modifiedType"))
+names(inputData) <- c("Samples", "Groups", "Proteins", "NPX")
+inputData$Groups <- factor(inputData$Groups, levels = unique(samples_third$modifiedType))
+
+ggplot(inputData,aes(x=Proteins,y=NPX,fill=Groups))+
+  geom_boxplot(aes(middle=mean(NPX)),fatten=1,outlier.size = 0.5)+
+  scale_fill_manual(values = c("#2F8AC4", "#E48725", "#A5AA99"),labels = c("Active" = "TB Disease","Latent" = "TB Infection","Control"="IGRA- Contact"))+
+  facet_wrap(~Proteins, scale="free",ncol=8)+
+  theme(axis.text=element_text(size=6),
+        axis.text.x=element_blank(),
+        axis.title = element_text(size=7,face="bold"),
+        strip.text = element_text(size=7),
+        legend.title = element_blank(), 
+        legend.text = element_text(size=7))
+
+olink <- olink[,-filteredProteins] # 
+olink <- olink[-(nSamples+1),] #remove lod_n info
+```
+
+
+### Save protein data
+
+```{r}
+save(olink,file="../Data/ReadyData/ReadyData-third-edta.RData")
+```
+
+
+
+
+## Heparin
+
+### Read protein data 
+
+```{r}
+npx_data_third_heparin%>%
+  glimpse()
+```
+
+### Convert protein data from long to wide format
+
+```{r}
+olink <- npx_data_third_heparin %>%
+  select(SampleID,Assay,NPX)
+olink <- dcast(olink, SampleID ~ factor(Assay, levels = unique(olink$Assay)), 
+               fun.aggregate=function(i) mean(i, na.rm=TRUE))
+
+rownames(olink) <- olink$SampleID
+olink <- olink%>%
+  select(-SampleID)
+```
+### Filtering proteins 
+
+```{r message=FALSE}
+percentage <- 0.3
+cutoff <- nrow(olink)*percentage
+nSamples <- nrow(olink)
+# Get LOD; since LOD varies between panels, collect individual LOD per protein then average them out
+LOD <- npx_data_third_heparin%>%
+  select(Assay,Panel_Version,LOD)
+unique(LOD$Panel_Version)
+LOD <- as.data.frame(LOD[!duplicated(LOD$Assay),])
+LOD <- LOD%>%select(-Panel_Version)
+LOD$Assay <- as.character(LOD$Assay)
+rownames(LOD) <- LOD$Assay
+identical(LOD$Assay,colnames(olink)) #TRUE
+# Add LOD to olink df
+olink <- as.data.frame(t(olink))
+olink <- merge(olink, LOD[,2, drop=FALSE], by="row.names", all = TRUE)
+rownames(olink) <- olink$Row.names
+olink$Row.names <- NULL
+colnames(olink)[nSamples+1] <- "LOD"
+# Detect number of samples with limit of detection (LOD)
+num_LOD <- as.data.frame(apply(olink, 1, function(x) length(which(x[1:nSamples] <= x[nSamples+1])) ))
+olink <- merge(olink, num_LOD, by="row.names")
+rownames(olink) <- olink$Row.names
+olink <- olink[,-1]
+colnames(olink)[nSamples+2] <- "n_LOD"
+olink <- olink[,-(nSamples+1)] #remove LOD
+olink <- as.data.frame(t(olink))
+
+# Remove proteins from analysis where more than 30% of samples have NPX values less than LOD 
+filteredProteins <- which(olink[nSamples+1,] > cutoff)
+filteredOlink <- olink[-(nSamples+1),filteredProteins]
+filteredOlink <- cbind(filteredOlink,samples_third[match(row.names(filteredOlink),samples_third$SampleID),"modifiedType"])
+filteredOlink$sample <- row.names(filteredOlink)
+inputData <- melt(filteredOlink,id=c("sample","modifiedType"))
+names(inputData) <- c("Samples", "Groups", "Proteins", "NPX")
+inputData$Groups <- factor(inputData$Groups, levels = unique(samples_third$modifiedType))
+colors <- brewer.pal(9, "Set3")
+
+ggplot(inputData,aes(x=Proteins,y=NPX,fill=Groups))+
+  geom_boxplot(aes(middle=mean(NPX)),fatten=1,outlier.size = 0.5)+
+  scale_fill_manual(values = c("#2F8AC4", "#E48725", "#A5AA99"),labels = c("Active" = "TB Disease","Latent" = "TB Infection","Control"="IGRA- Contact"))+
+  facet_wrap(~Proteins, scale="free",ncol=7)+
+  theme(axis.text=element_text(size=6),
+        axis.text.x=element_blank(),
+        axis.title = element_text(size=7,face="bold"),
+        strip.text = element_text(size=7),
+        legend.title = element_blank(), 
+        legend.text = element_text(size=7))
+
+# Remaining proteins with less than 30% of samples have NPX values less than LOD 
+remainingProteins <- which(olink[nSamples+1,] <= cutoff)
+filteredOlink <- olink[-(nSamples+1),remainingProteins]
+filteredOlink <- cbind(filteredOlink,samples_third[match(row.names(filteredOlink),samples_third$SampleID),"modifiedType"])
+filteredOlink$sample <- row.names(filteredOlink)
+inputData <- melt(filteredOlink,id=c("sample","modifiedType"))
+names(inputData) <- c("Samples", "Groups", "Proteins", "NPX")
+inputData$Groups <- factor(inputData$Groups, levels = unique(samples_third$modifiedType))
+#pdf(file=paste0(resultsDirectory,"Figure S2-edta.pdf"))
+ggplot(inputData,aes(x=Proteins,y=NPX,fill=Groups))+
+  geom_boxplot(aes(middle=mean(NPX)),fatten=1,outlier.size = 0.5)+
+  scale_fill_manual(values = c("#2F8AC4", "#E48725", "#A5AA99"),labels = c("Active" = "TB Disease","Latent" = "TB Infection","Control"="IGRA- Contact"))+
+  facet_wrap(~Proteins, scale="free",ncol=8)+
+  theme(axis.text=element_text(size=6),
+        axis.text.x=element_blank(),
+        axis.title = element_text(size=7,face="bold"),
+        strip.text = element_text(size=7),
+        legend.title = element_blank(), 
+        legend.text = element_text(size=7))
+#dev.off()
+
+olink <- olink[,-filteredProteins] # 
+olink <- olink[-(nSamples+1),] #remove lod_n info
+```
+
+
+### Save protein data
+
+```{r}
+save(olink,file="../Data/ReadyData/ReadyData-third-heparin.RData")
+```
+
+
+
+
+## Heparin TB treatment
+
+### Read protein data 
+
+```{r}
+npx_data_third_heparin_followTreatment%>%
+  glimpse()
+```
+
+### Convert protein data from long to wide format
+
+```{r}
+olink <- npx_data_third_heparin_followTreatment %>%
+  select(SampleID,Assay,NPX)
+olink <- dcast(olink, SampleID ~ factor(Assay, levels = unique(olink$Assay)), 
+               fun.aggregate=function(i) mean(i, na.rm=TRUE))
+
+rownames(olink) <- olink$SampleID
+olink <- olink%>%
+  select(-SampleID)
+```
+### Filtering proteins 
+
+```{r message=FALSE}
+percentage <- 0.3
+cutoff <- nrow(olink)*percentage
+nSamples <- nrow(olink)
+# Get LOD; since LOD varies between panels, collect individual LOD per protein then average them out
+LOD <- npx_data_third_heparin_followTreatment%>%
+  select(Assay,Panel_Version,LOD)
+unique(LOD$Panel_Version)
+LOD <- as.data.frame(LOD[!duplicated(LOD$Assay),])
+LOD <- LOD%>%select(-Panel_Version)
+LOD$Assay <- as.character(LOD$Assay)
+rownames(LOD) <- LOD$Assay
+identical(LOD$Assay,colnames(olink)) #TRUE
+# Add LOD to olink df
+olink <- as.data.frame(t(olink))
+olink <- merge(olink, LOD[,2, drop=FALSE], by="row.names", all = TRUE)
+rownames(olink) <- olink$Row.names
+olink$Row.names <- NULL
+colnames(olink)[nSamples+1] <- "LOD"
+# Detect number of samples with limit of detection (LOD)
+num_LOD <- as.data.frame(apply(olink, 1, function(x) length(which(x[1:nSamples] <= x[nSamples+1])) ))
+olink <- merge(olink, num_LOD, by="row.names")
+rownames(olink) <- olink$Row.names
+olink <- olink[,-1]
+colnames(olink)[nSamples+2] <- "n_LOD"
+olink <- olink[,-(nSamples+1)] #remove LOD
+olink <- as.data.frame(t(olink))
+
+# Remove proteins from analysis where more than 30% of samples have NPX values less than LOD 
+filteredProteins <- which(olink[nSamples+1,] > cutoff)
+filteredOlink <- olink[-(nSamples+1),filteredProteins]
+filteredOlink <- cbind(filteredOlink,samples_third[match(row.names(filteredOlink),samples_third$SampleID),"Treatment"])
+filteredOlink$sample <- row.names(filteredOlink)
+inputData <- melt(filteredOlink,id=c("sample","Treatment"))
+names(inputData) <- c("Samples", "Groups", "Proteins", "NPX")
+inputData$Groups <- factor(inputData$Groups, levels = unique(samples_third$Treatment))
+colors <- brewer.pal(9, "Set3")
+
+ggplot(inputData,aes(x=Proteins,y=NPX,fill=Groups))+
+  geom_boxplot(aes(middle=mean(NPX)),fatten=1,outlier.size = 0.5)+
+  scale_fill_manual(values = colors)+
+  facet_wrap(~Proteins, scale="free",ncol=7)+
+  theme(axis.text=element_text(size=6),
+        axis.text.x=element_blank(),
+        axis.title = element_text(size=7,face="bold"),
+        strip.text = element_text(size=7),
+        legend.title = element_blank(), 
+        legend.text = element_text(size=7))
+# dev.off()
+
+# Remaining proteins with less than 30% of samples have NPX values less than LOD 
+remainingProteins <- which(olink[nSamples+1,] <= cutoff)
+filteredOlink <- olink[-(nSamples+1),remainingProteins]
+filteredOlink <- cbind(filteredOlink,samples_third[match(row.names(filteredOlink),samples_third$SampleID),"Treatment"])
+filteredOlink$sample <- row.names(filteredOlink)
+inputData <- melt(filteredOlink,id=c("sample","Treatment"))
+names(inputData) <- c("Samples", "Groups", "Proteins", "NPX")
+inputData$Groups <- factor(inputData$Groups, levels = unique(samples_third$Treatment))
+
+ggplot(inputData,aes(x=Proteins,y=NPX,fill=Groups))+
+  geom_boxplot(aes(middle=mean(NPX)),fatten=1,outlier.size = 0.5)+
+  scale_fill_manual(values = colors)+
+  facet_wrap(~Proteins, scale="free",ncol=8)+
+  theme(axis.text=element_text(size=6),
+        axis.text.x=element_blank(),
+        axis.title = element_text(size=7,face="bold"),
+        strip.text = element_text(size=7),
+        legend.title = element_blank(), 
+        legend.text = element_text(size=7))
+
+olink <- olink[,-filteredProteins] # 
+olink <- olink[-(nSamples+1),] #remove lod_n info
+```
+
+
+### Save protein data
+
+```{r}
+save(olink,file="../Data/ReadyData/ReadyData-third-heparin-followTreatment.RData")
+```
+
+
+
+
+## Heparin nonTB
+
+### Read protein data 
+
+```{r}
+npx_data_third_heparin_nonTB%>%
+  glimpse()
+```
+
+### Convert protein data from long to wide format
+
+```{r}
+olink <- npx_data_third_heparin_nonTB %>%
+  select(SampleID,Assay,NPX)
+olink <- dcast(olink, SampleID ~ factor(Assay, levels = unique(olink$Assay)), 
+               fun.aggregate=function(i) mean(i, na.rm=TRUE))
+
+rownames(olink) <- olink$SampleID
+olink <- olink%>%
+  select(-SampleID)
+```
+### Filtering proteins 
+
+```{r message=FALSE}
+percentage <- 0.3
+cutoff <- nrow(olink)*percentage
+nSamples <- nrow(olink)
+# Get LOD; since LOD varies between panels, collect individual LOD per protein then average them out
+LOD <- npx_data_third_heparin_nonTB%>%
+  select(Assay,Panel_Version,LOD)
+unique(LOD$Panel_Version)
+LOD <- as.data.frame(LOD[!duplicated(LOD$Assay),])
+LOD <- LOD%>%select(-Panel_Version)
+LOD$Assay <- as.character(LOD$Assay)
+rownames(LOD) <- LOD$Assay
+identical(LOD$Assay,colnames(olink)) #TRUE
+# Add LOD to olink df
+olink <- as.data.frame(t(olink))
+olink <- merge(olink, LOD[,2, drop=FALSE], by="row.names", all = TRUE)
+rownames(olink) <- olink$Row.names
+olink$Row.names <- NULL
+colnames(olink)[nSamples+1] <- "LOD"
+# Detect number of samples with limit of detection (LOD)
+num_LOD <- as.data.frame(apply(olink, 1, function(x) length(which(x[1:nSamples] <= x[nSamples+1])) ))
+olink <- merge(olink, num_LOD, by="row.names")
+rownames(olink) <- olink$Row.names
+olink <- olink[,-1]
+colnames(olink)[nSamples+2] <- "n_LOD"
+olink <- olink[,-(nSamples+1)] #remove LOD
+olink <- as.data.frame(t(olink))
+
+# Remove proteins from analysis where more than 30% of samples have NPX values less than LOD 
+filteredProteins <- which(olink[nSamples+1,] > cutoff)
+filteredOlink <- olink[-(nSamples+1),filteredProteins]
+filteredOlink <- cbind(filteredOlink,samples_third[match(row.names(filteredOlink),samples_third$SampleID),"modifiedType"])
+filteredOlink$sample <- row.names(filteredOlink)
+inputData <- melt(filteredOlink,id=c("sample","modifiedType"))
+names(inputData) <- c("Samples", "Groups", "Proteins", "NPX")
+inputData$Groups <- factor(inputData$Groups, levels = unique(samples_third$modifiedType))
+colors <- brewer.pal(9, "Set1")
+
+ggplot(inputData,aes(x=Proteins,y=NPX,fill=Groups))+
+  geom_boxplot(aes(middle=mean(NPX)),fatten=1,outlier.size = 0.5)+
+  scale_fill_manual(values = colors)+
+  facet_wrap(~Proteins, scale="free",ncol=7)+
+  theme(axis.text=element_text(size=6),
+        axis.text.x=element_blank(),
+        axis.title = element_text(size=7,face="bold"),
+        strip.text = element_text(size=7),
+        legend.title = element_blank(), 
+        legend.text = element_text(size=7))
+
+# Remaining proteins with less than 30% of samples have NPX values less than LOD 
+remainingProteins <- which(olink[nSamples+1,] <= cutoff)
+filteredOlink <- olink[-(nSamples+1),remainingProteins]
+filteredOlink <- cbind(filteredOlink,samples_third[match(row.names(filteredOlink),samples_third$SampleID),"modifiedType"])
+filteredOlink$sample <- row.names(filteredOlink)
+inputData <- melt(filteredOlink,id=c("sample","modifiedType"))
+names(inputData) <- c("Samples", "Groups", "Proteins", "NPX")
+inputData$Groups <- factor(inputData$Groups, levels = unique(samples_third$modifiedType))
+
+ggplot(inputData,aes(x=Proteins,y=NPX,fill=Groups))+
+  geom_boxplot(aes(middle=mean(NPX)),fatten=1,outlier.size = 0.5)+
+  scale_fill_manual(values = colors)+
+  facet_wrap(~Proteins, scale="free",ncol=8)+
+  theme(axis.text=element_text(size=6),
+        axis.text.x=element_blank(),
+        axis.title = element_text(size=7,face="bold"),
+        strip.text = element_text(size=7),
+        legend.title = element_blank(), 
+        legend.text = element_text(size=7))
+
+olink <- olink[,-filteredProteins] # 
+olink <- olink[-(nSamples+1),] #remove lod_n info
+```
+
+
+### Save protein data
+
+```{r}
+save(olink,file="../Data/ReadyData/ReadyData-third-heparin-nonTB.RData")
+```
+
+
+
+
+## Second sweden
+
+### Read protein data 
+
+```{r}
+npx_data_second_sweden%>%
+  glimpse()
+```
+
+### Convert protein data from long to wide format
+
+```{r}
+olink <- npx_data_second_sweden %>%
+  select(SampleID,Assay,NPX)
+olink <- dcast(olink, SampleID ~ factor(Assay, levels = unique(olink$Assay)), 
+               fun.aggregate=function(i) mean(i, na.rm=TRUE))
+
+rownames(olink) <- olink$SampleID
+olink <- olink%>%
+  select(-SampleID)
+```
+
+### Filtering proteins 
+
+```{r message=FALSE}
+percentage <- 0.3
+cutoff <- nrow(olink)*percentage
+nSamples <- nrow(olink)
+# Get LOD; since LOD varies between panels, collect individual LOD per protein then average them out
+LOD <- npx_data_second_sweden%>%
+  select(Assay,Panel_Version,LOD)
+unique(LOD$Panel_Version)
+LOD <- as.data.frame(LOD[!duplicated(LOD$Assay),])
+LOD <- LOD%>%select(-Panel_Version)
+LOD$Assay <- as.character(LOD$Assay)
+rownames(LOD) <- LOD$Assay
+identical(LOD$Assay,colnames(olink)) #TRUE
+# Add LOD to olink df
+olink <- as.data.frame(t(olink))
+olink <- merge(olink, LOD[,2, drop=FALSE], by="row.names", all = TRUE)
+rownames(olink) <- olink$Row.names
+olink$Row.names <- NULL
+colnames(olink)[nSamples+1] <- "LOD"
+# Detect number of samples with limit of detection (LOD)
+num_LOD <- as.data.frame(apply(olink, 1, function(x) length(which(x[1:nSamples] <= x[nSamples+1])) ))
+olink <- merge(olink, num_LOD, by="row.names")
+rownames(olink) <- olink$Row.names
+olink <- olink[,-1]
+colnames(olink)[nSamples+2] <- "n_LOD"
+olink <- olink[,-(nSamples+1)] #remove LOD
+olink <- as.data.frame(t(olink))
+
+# Remove proteins from analysis where more than 30% of samples have NPX values less than LOD 
+filteredProteins <- which(olink[nSamples+1,] > cutoff)
+filteredOlink <- olink[-(nSamples+1),filteredProteins]
+filteredOlink <- cbind(filteredOlink,samples_second[match(row.names(filteredOlink),samples_second$SampleID),"modifiedType"])
+filteredOlink$sample <- row.names(filteredOlink)
+inputData <- melt(filteredOlink,id=c("sample","modifiedType"))
+names(inputData) <- c("Samples", "Groups", "Proteins", "NPX")
+inputData$Groups <- factor(inputData$Groups, levels = c("Active","Latent","Control"))
+colors <- brewer.pal(9, "Set1")
+
+ggplot(inputData,aes(x=Proteins,y=NPX,fill=Groups))+
+  geom_boxplot(aes(middle=mean(NPX)),fatten=1,outlier.size = 0.5)+
+  scale_fill_manual(values = c("#2F8AC4", "#E48725","#A5AA99"),labels = c("Active" = "TB Disease","Latent" = "TB Infection","Control"="IGRA- Contact"))+
+  facet_wrap(~Proteins, scale="free",ncol=7)+
+  theme(axis.text=element_text(size=6),
+        axis.text.x=element_blank(),
+        axis.title = element_text(size=7,face="bold"),
+        strip.text = element_text(size=7),
+        legend.title = element_blank(), 
+        legend.text = element_text(size=7))
+
+# Remaining proteins with less than 30% of samples have NPX values less than LOD 
+remainingProteins <- which(olink[nSamples+1,] <= cutoff)
+filteredOlink <- olink[-(nSamples+1),remainingProteins]
+filteredOlink <- cbind(filteredOlink,samples_second[match(row.names(filteredOlink),samples_second$SampleID),"modifiedType"])
+filteredOlink$sample <- row.names(filteredOlink)
+inputData <- melt(filteredOlink,id=c("sample","modifiedType"))
+names(inputData) <- c("Samples", "Groups", "Proteins", "NPX")
+inputData$Groups <- factor(inputData$Groups, levels = c("Active","Latent","Control"))
+
+ggplot(inputData,aes(x=Proteins,y=NPX,fill=Groups))+
+  geom_boxplot(aes(middle=mean(NPX)),fatten=1,outlier.size = 0.5)+
+  scale_fill_manual(values = c("#2F8AC4", "#E48725","#A5AA99"),labels = c("Active" = "TB Disease","Latent" = "TB Infection","Control"="IGRA- Contact"))+
+  facet_wrap(~Proteins, scale="free",ncol=8)+
+  theme(axis.text=element_text(size=6),
+        axis.text.x=element_blank(),
+        axis.title = element_text(size=7,face="bold"),
+        strip.text = element_text(size=7),
+        legend.title = element_blank(), 
+        legend.text = element_text(size=7))
+
+olink <- olink[,-filteredProteins] # 
+olink <- olink[-(nSamples+1),] #remove lod_n info
+```
+
+
+### Save protein data
+
+```{r}
+save(olink,file="../Data/ReadyData/ReadyData-second-sweden.RData")
+```
+
+
+
+
+## Second italy
+
+### Read protein data 
+
+```{r}
+npx_data_second_italy%>%
+  glimpse()
+```
+
+### Convert protein data from long to wide format
+
+```{r}
+olink <- npx_data_second_italy %>%
+  select(SampleID,Assay,NPX)
+olink <- dcast(olink, SampleID ~ factor(Assay, levels = unique(olink$Assay)), 
+               fun.aggregate=function(i) mean(i, na.rm=TRUE))
+
+rownames(olink) <- olink$SampleID
+olink <- olink%>%
+  select(-SampleID)
+```
+
+### Filtering proteins 
+
+```{r message=FALSE}
+percentage <- 0.3
+cutoff <- nrow(olink)*percentage
+nSamples <- nrow(olink)
+# Get LOD; since LOD varies between panels, collect individual LOD per protein then average them out
+LOD <- npx_data_second_italy%>%
+  select(Assay,Panel_Version,LOD)
+unique(LOD$Panel_Version)
+LOD <- as.data.frame(LOD[!duplicated(LOD$Assay),])
+LOD <- LOD%>%select(-Panel_Version)
+LOD$Assay <- as.character(LOD$Assay)
+rownames(LOD) <- LOD$Assay
+identical(LOD$Assay,colnames(olink)) #TRUE
+# Add LOD to olink df
+olink <- as.data.frame(t(olink))
+olink <- merge(olink, LOD[,2, drop=FALSE], by="row.names", all = TRUE)
+rownames(olink) <- olink$Row.names
+olink$Row.names <- NULL
+colnames(olink)[nSamples+1] <- "LOD"
+# Detect number of samples with limit of detection (LOD)
+num_LOD <- as.data.frame(apply(olink, 1, function(x) length(which(x[1:nSamples] <= x[nSamples+1])) ))
+olink <- merge(olink, num_LOD, by="row.names")
+rownames(olink) <- olink$Row.names
+olink <- olink[,-1]
+colnames(olink)[nSamples+2] <- "n_LOD"
+olink <- olink[,-(nSamples+1)] #remove LOD
+olink <- as.data.frame(t(olink))
+
+# Remove proteins from analysis where more than 30% of samples have NPX values less than LOD 
+filteredProteins <- which(olink[nSamples+1,] > cutoff)
+filteredOlink <- olink[-(nSamples+1),filteredProteins]
+filteredOlink <- cbind(filteredOlink,samples_second[match(row.names(filteredOlink),samples_second$SampleID),"modifiedType"])
+filteredOlink$sample <- row.names(filteredOlink)
+inputData <- melt(filteredOlink,id=c("sample","modifiedType"))
+names(inputData) <- c("Samples", "Groups", "Proteins", "NPX")
+inputData$Groups <- factor(inputData$Groups, levels = c("Active","Latent","Control"))
+colors <- brewer.pal(9, "Set1")
+
+ggplot(inputData,aes(x=Proteins,y=NPX,fill=Groups))+
+  geom_boxplot(aes(middle=mean(NPX)),fatten=1,outlier.size = 0.5)+
+  scale_fill_manual(values = c("#2F8AC4", "#E48725","#A5AA99"),labels = c("Active" = "TB Disease","Latent" = "TB Infection","Control"="IGRA- Contact"))+
+  facet_wrap(~Proteins, scale="free",ncol=7)+
+  theme(axis.text=element_text(size=6),
+        axis.text.x=element_blank(),
+        axis.title = element_text(size=7,face="bold"),
+        strip.text = element_text(size=7),
+        legend.title = element_blank(), 
+        legend.text = element_text(size=7))
+
+# Remaining proteins with less than 30% of samples have NPX values less than LOD 
+remainingProteins <- which(olink[nSamples+1,] <= cutoff)
+filteredOlink <- olink[-(nSamples+1),remainingProteins]
+filteredOlink <- cbind(filteredOlink,samples_second[match(row.names(filteredOlink),samples_second$SampleID),"modifiedType"])
+filteredOlink$sample <- row.names(filteredOlink)
+inputData <- melt(filteredOlink,id=c("sample","modifiedType"))
+names(inputData) <- c("Samples", "Groups", "Proteins", "NPX")
+inputData$Groups <- factor(inputData$Groups, levels = c("Active","Latent","Control"))
+
+ggplot(inputData,aes(x=Proteins,y=NPX,fill=Groups))+
+  geom_boxplot(aes(middle=mean(NPX)),fatten=1,outlier.size = 0.5)+
+  scale_fill_manual(values = c("#2F8AC4", "#E48725","#A5AA99"),labels = c("Active" = "TB Disease","Latent" = "TB Infection","Control"="IGRA- Contact"))+
+  facet_wrap(~Proteins, scale="free",ncol=8)+
+  theme(axis.text=element_text(size=6),
+        axis.text.x=element_blank(),
+        axis.title = element_text(size=7,face="bold"),
+        strip.text = element_text(size=7),
+        legend.title = element_blank(), 
+        legend.text = element_text(size=7))
+
+olink <- olink[,-filteredProteins] # 
+olink <- olink[-(nSamples+1),] #remove lod_n info
+```
+
+
+### Save protein data
+
+```{r}
+save(olink,file="../Data/ReadyData/ReadyData-second-italy.RData")
+```
+
+

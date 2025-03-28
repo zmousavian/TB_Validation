@@ -1,0 +1,702 @@
+---
+title: "New Olink Study"
+author: "Zaynab Mousavian"
+date: "23 July 2024"
+output:
+  html_document: default
+  pdf_document: default
+subtitle: Support vector machine
+---
+
+```{r setup, include=FALSE}
+# Set global options for all chunks
+knitr::opts_chunk$set(
+  message = FALSE,
+  warning = FALSE
+)
+```
+
+# Load R packages
+
+```{r message=FALSE, warning=FALSE}
+library(dplyr)
+library(ggplot2)
+library(multiview)
+library(tidyr)
+library(tidyverse)
+library(caret)
+library(pROC)
+library(pROC)
+library(caret)
+library(groupdata2)
+library(kernlab)
+library(Hmisc)
+library(tidyverse)
+library(ROCaggregator)
+library(RColorBrewer)
+library(ROCR)
+library(pracma)
+library(stats)
+library(caretEnsemble)
+library(PRROC)
+```
+
+# Function for visualization ROC plot with Youden index with text
+
+```{r}
+ROCplotwithYoudenText_func <- function(rocObj, ciData, specific_specificity = NULL, marker_name=NULL){
+  
+  youden_index <- rocObj$sensitivities + rocObj$specificities - 1
+  optimal_threshold_index <- which.max(youden_index)
+  optimal_threshold <- rocObj$thresholds[optimal_threshold_index]
+
+  optimal_sensitivity <- rocObj$sensitivities[optimal_threshold_index]
+  optimal_specificity <- rocObj$specificities[optimal_threshold_index]
+ 
+  plot <- ggroc(rocObj,legacy.axes = TRUE)  + geom_abline(slope=1, intercept = 0, linetype = "dashed", alpha=0.7, color = "grey") + coord_equal() + 
+    geom_ribbon(data = ciData, aes(x = 1-x, ymin = lower, ymax = upper), fill = "steelblue", alpha= 0.2) + 
+    ggtitle(paste0("AUC=",round(roc0$auc,2)," (",gsub(" \\(DeLong\\)","",capture.output(roc0$ci)),")"))+
+    labs(x = "1 - Specificity",
+         y = "Sensitivity")+
+    theme(axis.text.x = element_text(size = 12),  
+          axis.text.y = element_text(size = 12),
+          axis.title.y = element_text(size=12),
+          plot.title = element_text(size=9),
+          panel.background = element_rect(fill = "white", color = NA),  
+          plot.background = element_rect(fill = "white", color = NA), 
+          panel.grid.major = element_blank(),  
+          panel.grid.minor = element_blank(),
+          panel.border = element_rect(color ="grey", fill = NA))+
+  
+    geom_point(aes(x = 1 - optimal_specificity, y = optimal_sensitivity), color = "black", size = 2) +
+    geom_text(aes(x = 1 - optimal_specificity, y = optimal_sensitivity, 
+                  label = paste0("(%", round(optimal_sensitivity, 2)*100,", %",round(optimal_specificity, 2)*100, ")")), 
+              hjust = 1, vjust = 1.5, x = 0.95, y = 0.05,color = "black", size = 4)
+    if (!is.null(specific_specificity)) {
+    specific_fpr <- 1 - specific_specificity
+    
+    
+    closest_specificity_index <- which.min(abs(rocObj$specificities - specific_specificity))
+    sensitivity_at_specific_specificity <- rocObj$sensitivities[closest_specificity_index]
+    
+   
+    plot <- plot +
+      geom_point(aes(x = specific_fpr, y = sensitivity_at_specific_specificity), color = "lightcoral", size = 2) +
+      geom_text(aes(x = specific_fpr, y = sensitivity_at_specific_specificity, 
+                    label = paste0("(%", round(sensitivity_at_specific_specificity, 2)*100,", %",round(specific_specificity, 2)*100, ")")), 
+                hjust = 1, vjust = -0.5,x = 0.95, y = 0.05, color = "lightcoral", size = 4)
+    }
+  if (!is.null(marker_name)) {
+  
+  plot <- plot +
+    annotate("text", x = 0.95, y = 0.05, 
+             label = marker_name, 
+             hjust = 1, vjust = 0, 
+             color = "blue", size = 4, fontface = "italic")
+  }
+  return(plot)
+}
+```
+
+
+
+# Function for visualization ROC plot with Youden index
+
+```{r}
+ROCplotwithYouden_func <- function(rocObj, ciData, specific_specificity = NULL,marker_name=NULL){
+  
+  youden_index <- rocObj$sensitivities + rocObj$specificities - 1
+  optimal_threshold_index <- which.max(youden_index)
+  optimal_threshold <- rocObj$thresholds[optimal_threshold_index]
+
+  optimal_sensitivity <- rocObj$sensitivities[optimal_threshold_index]
+  optimal_specificity <- rocObj$specificities[optimal_threshold_index]
+ 
+  plot <- ggroc(rocObj,legacy.axes = TRUE)  + geom_abline(slope=1, intercept = 0, linetype = "dashed", alpha=0.7, color = "grey") + coord_equal() + 
+    geom_ribbon(data = ciData, aes(x = 1-x, ymin = lower, ymax = upper), fill = "steelblue", alpha= 0.2) + 
+    ggtitle(paste0("AUC=",round(roc0$auc,2)," (",gsub(" \\(DeLong\\)","",capture.output(roc0$ci)),")"))+
+    labs(x = "1 - Specificity",
+         y = "Sensitivity")+
+    theme(axis.text.x = element_text(size = 12), 
+          axis.text.y = element_text(size = 12),
+          axis.title.y = element_text(size=12),
+          plot.title = element_text(size=9),
+          panel.background = element_rect(fill = "white", color = NA),  
+          plot.background = element_rect(fill = "white", color = NA), 
+          panel.grid.major = element_blank(),  
+          panel.grid.minor = element_blank(),
+          panel.border = element_rect(color = "gray", fill = NA))+
+    geom_point(aes(x = 1 - optimal_specificity, y = optimal_sensitivity), color = "black", size = 2) 
+ if (!is.null(specific_specificity)) {
+    specific_fpr <- 1 - specific_specificity
+    closest_specificity_index <- which.min(abs(rocObj$specificities - specific_specificity))
+    sensitivity_at_specific_specificity <- rocObj$sensitivities[closest_specificity_index]
+    
+    plot <- plot + 
+      geom_point(aes(x = specific_fpr, y = sensitivity_at_specific_specificity), color = "lightcoral", size = 2) 
+ }
+   if (!is.null(marker_name)) {
+  
+  plot <- plot +
+    annotate("text", x = 0.95, y = 0.05, 
+             label = marker_name, 
+             hjust = 1, vjust = 0, 
+             color = "blue", size = 4, fontface = "italic")
+  }
+  return(plot)
+}
+```
+
+
+# Which data? {.tabset}
+
+## Signature including 12 proteins
+
+### Load data for TB and nonTB from Italy
+
+```{r message=FALSE, warning=FALSE}
+l=load("../Data/ReadyData/AllDatasets-Samples.RData")
+load(file="../Data/ReadyData/generated for iScience/0.3-pearson-modules.RData")
+module="turquoise"
+column = match(module, modNames);
+moduleGenes = modules [[column]]
+moduleGenes=moduleGenes[-c(6,8,12,14)]
+
+l=load("../Data/ReadyData/ReadyData-second-italy.RData")
+dat_Expr_1 <- olink 
+groups_1 <- samples_second[match(row.names(dat_Expr_1),samples_second$SampleID),"modifiedType",drop=TRUE]
+l=load("../Data/ReadyData/ReadyData-third-heparin-nonTB.RData")
+dat_Expr_2 <- olink 
+groups_2 <- samples_third[match(row.names(dat_Expr_2),samples_third$SampleID),"modifiedType",drop=TRUE]
+
+first_dataset <- dat_Expr_1%>%
+  select(moduleGenes)%>%
+  mutate(Class=groups_1)
+
+first_dataset <- first_dataset%>%
+  filter(Class%in%c("Active"))
+
+second_dataset <- dat_Expr_2%>%
+  select(moduleGenes)%>%
+  mutate(Class="nonTB")
+
+dataset <- first_dataset%>%
+  rbind(second_dataset)
+
+dataset$Class <- factor(dataset$Class,levels=c("Active","nonTB"))
+dataset$Sample=as.factor(row.names(dataset))
+data <- dataset
+```
+
+### Run random forest classification by 5-fold cross validation and compute ROC for each fold
+
+```{r }
+set.seed(123)
+data <- fold(data, k = 5, cat_col = "Class", id_col = 'Sample')
+
+
+rocs <- list()
+confmat <- list()
+counts <- list()
+prs=list()
+# One iteration per fold
+for (fold in 1:5){
+  
+  # Create training set for this iteration
+  # Subset all the datapoints where .folds does not match the current fold
+  training_set <- data[data$.folds != fold,]
+  
+  # Create test set for this iteration
+  # Subset all the datapoints where .folds matches the current fold
+  testing_set <- data[data$.folds == fold,]
+  training=subset(as.data.frame(training_set),select=-c(Sample,.folds))
+  testing=subset(as.data.frame(testing_set),select=-c(Sample,.folds))
+  
+  set.seed(123)
+  fitControl <- trainControl(method = "repeatedcv",
+                             ## 10-fold CV...
+                             repeats = 10,
+                             number = 10,
+                             classProbs = TRUE,
+                             summaryFunction = defaultSummary)
+  
+   set.seed(123)
+   model <- train(Class ~ ., data = training, 
+                 method = "ranger", 
+                 trControl = fitControl,metric="Kappa")
+  
+  
+  pred <- predict(model, testing)
+  prob <- predict(model, testing, type="prob")
+  mat0 <- confusionMatrix(pred,testing$Class)
+  
+  roc0 <- roc(response = testing$Class, 
+              predictor = prob[,1], 
+              levels = rev(levels(testing$Class)),ci=TRUE)
+  pr<-pr.curve(scores.class0 = testing$Class, weights.class0 = prob[,1],curve=TRUE);
+  
+  rocs[[paste0("fold:",fold)]]=roc0
+  prs[[paste0("fold:",fold)]]=pr
+  confmat[[paste0("fold:",fold)]]=mat0
+  
+  counts[[paste0("fold:",fold)]]=c(sum(testing$Class == "nonTB"),nrow(testing))
+}
+
+plot(prs[[1]])
+```
+
+### Aggregate ROC and PR plots of different folds into one main plot 
+
+```{r}
+get_proc <- function(roc_obj,counts_obj){
+  list(
+    "fpr" = 1 - roc_obj$specificities,
+    "tpr" = roc_obj$sensitivities,
+    "thresholds" = roc_obj$thresholds,
+    "negative_count"= counts_obj[1],
+    "total_count" = counts_obj[2],
+    "auc" = roc_obj$auc
+  )
+}
+
+roc_obj_node_1 <- get_proc(rocs[[1]],counts[[1]])
+#> Setting levels: control = 0, case = 1
+#> Setting direction: controls < cases
+roc_obj_node_2 <- get_proc(rocs[[2]],counts[[2]])
+#> Setting levels: control = 0, case = 1
+#> Setting direction: controls < cases
+roc_obj_node_3 <- get_proc(rocs[[3]],counts[[3]])
+#> Setting levels: control = 0, case = 1
+#> Setting direction: controls < cases
+roc_obj_node_4 <- get_proc(rocs[[4]],counts[[4]])
+#> Setting levels: control = 0, case = 1
+#> Setting direction: controls < cases
+roc_obj_node_5 <- get_proc(rocs[[5]],counts[[5]])
+#> Setting levels: control = 0, case = 1
+#> Setting direction: controls < cases
+
+# Preparing the input
+fpr <- list(roc_obj_node_1$fpr, roc_obj_node_2$fpr, roc_obj_node_3$fpr,roc_obj_node_4$fpr,roc_obj_node_5$fpr)
+tpr <- list(roc_obj_node_1$tpr, roc_obj_node_2$tpr, roc_obj_node_3$tpr,roc_obj_node_4$tpr,roc_obj_node_5$tpr)
+thresholds <- list(
+  roc_obj_node_1$thresholds, roc_obj_node_2$thresholds, roc_obj_node_3$thresholds,roc_obj_node_4$thresholds,roc_obj_node_5$thresholds)
+negative_count <- c(
+  roc_obj_node_1$negative_count, roc_obj_node_2$negative_count, roc_obj_node_3$negative_count,roc_obj_node_4$negative_count,roc_obj_node_5$negative_count)
+total_count <- c(
+  roc_obj_node_1$total_count, roc_obj_node_2$total_count, roc_obj_node_3$total_count,roc_obj_node_4$total_count,roc_obj_node_5$total_count)
+
+# Compute the global ROC curve for the model
+roc_aggregated <- roc_curve(fpr, tpr, thresholds, negative_count, total_count)
+
+roc_aggregated$sensitivities <- roc_aggregated$tpr
+roc_aggregated$specificities <- 1-roc_aggregated$fpr
+# Calculate the AUC
+roc_auc <- trapz(roc_aggregated$fpr, roc_aggregated$tpr)
+
+sprintf("ROC AUC aggregated from each node's results: %f", roc_auc)
+
+precision_recall_aggregated <- precision_recall_curve(
+  fpr, tpr, thresholds, negative_count, total_count)
+# Calculate the precision-recall AUC
+precision_recall_auc <- -trapz(
+  precision_recall_aggregated$recall, precision_recall_aggregated$pre)
+
+sprintf(
+  "Precision-Recall AUC aggregated from each node's results: %f",
+  precision_recall_auc
+)
+```
+
+### Visualize results using ROC plot
+
+```{r}
+path_cols <- brewer.pal(8, "Set1")[c(1,2,4,5)]
+
+new_rocs=data.frame()
+j=1
+roc_folds <- function(roc_obj){
+  new_rocs <<- rbind(new_rocs,data.frame(tpr=roc_obj$sensitivities,fpr=1-roc_obj$specificities,fold=paste0("Fold ",as.character(j)),color="gray"))
+  new_rocs <<- new_rocs[order(new_rocs$fold,new_rocs$fpr,new_rocs$tpr,decreasing = FALSE),]
+  j <<- j+1
+}
+lapply(rocs,function(x) roc_folds(x))
+rocPlot<- data.frame(tpr=roc_aggregated$tpr,fpr=roc_aggregated$fpr,fold="Average of Folds",color="notGray")
+
+Fig9_A <- ggplot(new_rocs,aes(x = fpr, y = tpr,group=fold))+
+  geom_line(aes(linetype=fold),colour='gray')+
+  geom_line(data=rocPlot, aes(x = fpr, y = tpr),linetype=1,linewidth=2)+
+  labs(x = "1 - Specificity", y = "Sensitivity")+
+  ggtitle(paste0("Average AUC=",format(round(roc_auc,2),nsmall=2)))+
+  scale_linetype_manual(values=c(2,3,4,5,6))+
+  theme_bw()+
+  theme(plot.title = element_text(size=9),axis.title = element_text(size=12),axis.text = element_text(size=12))+
+  guides(linetype=FALSE)+
+  xlim(0,1)+
+  ylim(0,1)
+Fig9_A
+```
+
+
+## Signature including 6 proteins
+
+### Load data for TB and nonTB from Italy
+
+```{r message=FALSE, warning=FALSE}
+l=load("../Data/ReadyData/AllDatasets-Samples.RData")
+moduleGenes=c("IL6","CDCP1","IFN-gamma","CXCL9","VEGFA","MCP-3")
+l=load("../Data/ReadyData/ReadyData-second-italy.RData")
+dat_Expr_1 <- olink 
+groups_1 <- samples_second[match(row.names(dat_Expr_1),samples_second$SampleID),"modifiedType",drop=TRUE]
+l=load("../Data/ReadyData/ReadyData-third-heparin-nonTB.RData")
+dat_Expr_2 <- olink 
+groups_2 <- samples_third[match(row.names(dat_Expr_2),samples_third$SampleID),"modifiedType",drop=TRUE]
+
+first_dataset <- dat_Expr_1%>%
+  select(moduleGenes)%>%
+  mutate(Class=groups_1)
+
+first_dataset <- first_dataset%>%
+  filter(Class%in%c("Active"))
+
+second_dataset <- dat_Expr_2%>%
+  select(moduleGenes)%>%
+  mutate(Class="nonTB")
+
+dataset <- first_dataset%>%
+  rbind(second_dataset)
+
+dataset$Class <- factor(dataset$Class,levels=c("Active","nonTB"))
+dataset$Sample=as.factor(row.names(dataset))
+data <- dataset
+```
+
+### Run random forest classification by 5-fold cross validation and compute ROC for each fold
+
+```{r }
+set.seed(123)
+data <- fold(data, k = 5, cat_col = "Class", id_col = 'Sample')
+
+
+rocs <- list()
+confmat <- list()
+counts <- list()
+prs=list()
+# One iteration per fold
+for (fold in 1:5){
+  
+  # Create training set for this iteration
+  # Subset all the datapoints where .folds does not match the current fold
+  training_set <- data[data$.folds != fold,]
+  
+  # Create test set for this iteration
+  # Subset all the datapoints where .folds matches the current fold
+  testing_set <- data[data$.folds == fold,]
+  training=subset(as.data.frame(training_set),select=-c(Sample,.folds))
+  testing=subset(as.data.frame(testing_set),select=-c(Sample,.folds))
+  
+  set.seed(123)
+  fitControl <- trainControl(method = "repeatedcv",
+                             ## 10-fold CV...
+                             repeats = 10,
+                             number = 10,
+                             classProbs = TRUE,
+                             summaryFunction = defaultSummary)
+  
+   set.seed(123)
+   model <- train(Class ~ ., data = training, 
+                 method = "ranger", 
+                 trControl = fitControl,metric="Kappa")
+  
+  
+  pred <- predict(model, testing)
+  prob <- predict(model, testing, type="prob")
+  mat0 <- confusionMatrix(pred,testing$Class)
+  
+  roc0 <- roc(response = testing$Class, 
+              predictor = prob[,1], 
+              levels = rev(levels(testing$Class)),ci=TRUE)
+  pr<-pr.curve(scores.class0 = testing$Class, weights.class0 = prob[,1],curve=TRUE);
+  
+  rocs[[paste0("fold:",fold)]]=roc0
+  prs[[paste0("fold:",fold)]]=pr
+  confmat[[paste0("fold:",fold)]]=mat0
+  
+  counts[[paste0("fold:",fold)]]=c(sum(testing$Class == "nonTB"),nrow(testing))
+}
+```
+
+### Aggregate ROC and PR plots of different folds into one main plot 
+
+```{r}
+get_proc <- function(roc_obj,counts_obj){
+  list(
+    "fpr" = 1 - roc_obj$specificities,
+    "tpr" = roc_obj$sensitivities,
+    "thresholds" = roc_obj$thresholds,
+    "negative_count"= counts_obj[1],
+    "total_count" = counts_obj[2],
+    "auc" = roc_obj$auc
+  )
+}
+
+roc_obj_node_1 <- get_proc(rocs[[1]],counts[[1]])
+#> Setting levels: control = 0, case = 1
+#> Setting direction: controls < cases
+roc_obj_node_2 <- get_proc(rocs[[2]],counts[[2]])
+#> Setting levels: control = 0, case = 1
+#> Setting direction: controls < cases
+roc_obj_node_3 <- get_proc(rocs[[3]],counts[[3]])
+#> Setting levels: control = 0, case = 1
+#> Setting direction: controls < cases
+roc_obj_node_4 <- get_proc(rocs[[4]],counts[[4]])
+#> Setting levels: control = 0, case = 1
+#> Setting direction: controls < cases
+roc_obj_node_5 <- get_proc(rocs[[5]],counts[[5]])
+#> Setting levels: control = 0, case = 1
+#> Setting direction: controls < cases
+
+# Preparing the input
+fpr <- list(roc_obj_node_1$fpr, roc_obj_node_2$fpr, roc_obj_node_3$fpr,roc_obj_node_4$fpr,roc_obj_node_5$fpr)
+tpr <- list(roc_obj_node_1$tpr, roc_obj_node_2$tpr, roc_obj_node_3$tpr,roc_obj_node_4$tpr,roc_obj_node_5$tpr)
+thresholds <- list(
+  roc_obj_node_1$thresholds, roc_obj_node_2$thresholds, roc_obj_node_3$thresholds,roc_obj_node_4$thresholds,roc_obj_node_5$thresholds)
+negative_count <- c(
+  roc_obj_node_1$negative_count, roc_obj_node_2$negative_count, roc_obj_node_3$negative_count,roc_obj_node_4$negative_count,roc_obj_node_5$negative_count)
+total_count <- c(
+  roc_obj_node_1$total_count, roc_obj_node_2$total_count, roc_obj_node_3$total_count,roc_obj_node_4$total_count,roc_obj_node_5$total_count)
+
+# Compute the global ROC curve for the model
+roc_aggregated <- roc_curve(fpr, tpr, thresholds, negative_count, total_count)
+
+roc_aggregated$sensitivities <- roc_aggregated$tpr
+roc_aggregated$specificities <- 1-roc_aggregated$fpr
+# Calculate the AUC
+roc_auc <- trapz(roc_aggregated$fpr, roc_aggregated$tpr)
+
+sprintf("ROC AUC aggregated from each node's results: %f", roc_auc)
+
+precision_recall_aggregated <- precision_recall_curve(
+  fpr, tpr, thresholds, negative_count, total_count)
+# Calculate the precision-recall AUC
+precision_recall_auc <- -trapz(
+  precision_recall_aggregated$recall, precision_recall_aggregated$pre)
+
+sprintf(
+  "Precision-Recall AUC aggregated from each node's results: %f",
+  precision_recall_auc
+)
+```
+
+### Visualize results using ROC plot
+
+```{r}
+new_rocs=data.frame()
+j=1
+roc_folds <- function(roc_obj){
+  new_rocs <<- rbind(new_rocs,data.frame(tpr=roc_obj$sensitivities,fpr=1-roc_obj$specificities,fold=paste0("Fold ",as.character(j)),color="gray"))
+  new_rocs <<- new_rocs[order(new_rocs$fold,new_rocs$fpr,new_rocs$tpr,decreasing = FALSE),]
+  j <<- j+1
+}
+lapply(rocs,function(x) roc_folds(x))
+rocPlot<- data.frame(tpr=roc_aggregated$tpr,fpr=roc_aggregated$fpr,fold="Average of Folds",color="notGray")
+
+
+Fig9_B <- ggplot(new_rocs,aes(x = fpr, y = tpr,group=fold))+
+  geom_line(aes(linetype=fold),colour='gray')+
+  geom_line(data=rocPlot, aes(x = fpr, y = tpr),linetype=1,linewidth=2)+
+  labs(x = "1 - Specificity", y = "Sensitivity")+
+  ggtitle(paste0("Average AUC=",format(round(roc_auc,2),nsmall=2)))+
+  scale_linetype_manual(values=c(2,3,4,5,6))+
+  theme_bw()+
+  theme(plot.title = element_text(size=9),axis.title = element_text(size=12),axis.text = element_text(size=12))+
+  guides(linetype=FALSE)+
+  xlim(0,1)+
+  ylim(0,1)
+Fig9_B
+```
+
+
+
+## Signature including 4 proteins
+
+### Load data for TB and nonTB from Italy
+
+```{r message=FALSE, warning=FALSE}
+l=load("../Data/ReadyData/AllDatasets-Samples.RData")
+moduleGenes=c("CDCP1","IFN-gamma","CXCL9","VEGFA")
+l=load("../Data/ReadyData/ReadyData-second-italy.RData")
+dat_Expr_1 <- olink 
+groups_1 <- samples_second[match(row.names(dat_Expr_1),samples_second$SampleID),"modifiedType",drop=TRUE]
+l=load("../Data/ReadyData/ReadyData-third-heparin-nonTB.RData")
+dat_Expr_2 <- olink 
+groups_2 <- samples_third[match(row.names(dat_Expr_2),samples_third$SampleID),"modifiedType",drop=TRUE]
+
+first_dataset <- dat_Expr_1%>%
+  select(moduleGenes)%>%
+  mutate(Class=groups_1)
+
+first_dataset <- first_dataset%>%
+  filter(Class%in%c("Active"))
+
+second_dataset <- dat_Expr_2%>%
+  select(moduleGenes)%>%
+  mutate(Class="nonTB")
+
+dataset <- first_dataset%>%
+  rbind(second_dataset)
+
+dataset$Class <- factor(dataset$Class,levels=c("Active","nonTB"))
+dataset$Sample=as.factor(row.names(dataset))
+data <- dataset
+```
+
+### Run random forest classification by 5-fold cross validation and compute ROC for each fold
+
+```{r }
+set.seed(123)
+data <- fold(data, k = 5, cat_col = "Class", id_col = 'Sample')
+
+
+rocs <- list()
+confmat <- list()
+counts <- list()
+prs=list()
+# One iteration per fold
+for (fold in 1:5){
+  
+  # Create training set for this iteration
+  # Subset all the datapoints where .folds does not match the current fold
+  training_set <- data[data$.folds != fold,]
+  
+  # Create test set for this iteration
+  # Subset all the datapoints where .folds matches the current fold
+  testing_set <- data[data$.folds == fold,]
+  training=subset(as.data.frame(training_set),select=-c(Sample,.folds))
+  testing=subset(as.data.frame(testing_set),select=-c(Sample,.folds))
+  
+  set.seed(123)
+  fitControl <- trainControl(method = "repeatedcv",
+                             ## 10-fold CV...
+                             repeats = 10,
+                             number = 10,
+                             classProbs = TRUE,
+                             summaryFunction = defaultSummary)
+  
+   set.seed(123)
+   model <- train(Class ~ ., data = training, 
+                 method = "ranger", 
+                 trControl = fitControl,metric="Kappa")
+  
+  
+  pred <- predict(model, testing)
+  prob <- predict(model, testing, type="prob")
+  mat0 <- confusionMatrix(pred,testing$Class)
+  
+  roc0 <- roc(response = testing$Class, 
+              predictor = prob[,1], 
+              levels = rev(levels(testing$Class)),ci=TRUE)
+  pr<-pr.curve(scores.class0 = testing$Class, weights.class0 = prob[,1],curve=TRUE);
+  
+  rocs[[paste0("fold:",fold)]]=roc0
+  prs[[paste0("fold:",fold)]]=pr
+  confmat[[paste0("fold:",fold)]]=mat0
+  
+  counts[[paste0("fold:",fold)]]=c(sum(testing$Class == "nonTB"),nrow(testing))
+}
+```
+
+### Aggregate ROC and PR plots of different folds into one main plot 
+
+```{r}
+get_proc <- function(roc_obj,counts_obj){
+  list(
+    "fpr" = 1 - roc_obj$specificities,
+    "tpr" = roc_obj$sensitivities,
+    "thresholds" = roc_obj$thresholds,
+    "negative_count"= counts_obj[1],
+    "total_count" = counts_obj[2],
+    "auc" = roc_obj$auc
+  )
+}
+
+roc_obj_node_1 <- get_proc(rocs[[1]],counts[[1]])
+#> Setting levels: control = 0, case = 1
+#> Setting direction: controls < cases
+roc_obj_node_2 <- get_proc(rocs[[2]],counts[[2]])
+#> Setting levels: control = 0, case = 1
+#> Setting direction: controls < cases
+roc_obj_node_3 <- get_proc(rocs[[3]],counts[[3]])
+#> Setting levels: control = 0, case = 1
+#> Setting direction: controls < cases
+roc_obj_node_4 <- get_proc(rocs[[4]],counts[[4]])
+#> Setting levels: control = 0, case = 1
+#> Setting direction: controls < cases
+roc_obj_node_5 <- get_proc(rocs[[5]],counts[[5]])
+#> Setting levels: control = 0, case = 1
+#> Setting direction: controls < cases
+
+# Preparing the input
+fpr <- list(roc_obj_node_1$fpr, roc_obj_node_2$fpr, roc_obj_node_3$fpr,roc_obj_node_4$fpr,roc_obj_node_5$fpr)
+tpr <- list(roc_obj_node_1$tpr, roc_obj_node_2$tpr, roc_obj_node_3$tpr,roc_obj_node_4$tpr,roc_obj_node_5$tpr)
+thresholds <- list(
+  roc_obj_node_1$thresholds, roc_obj_node_2$thresholds, roc_obj_node_3$thresholds,roc_obj_node_4$thresholds,roc_obj_node_5$thresholds)
+negative_count <- c(
+  roc_obj_node_1$negative_count, roc_obj_node_2$negative_count, roc_obj_node_3$negative_count,roc_obj_node_4$negative_count,roc_obj_node_5$negative_count)
+total_count <- c(
+  roc_obj_node_1$total_count, roc_obj_node_2$total_count, roc_obj_node_3$total_count,roc_obj_node_4$total_count,roc_obj_node_5$total_count)
+
+# Compute the global ROC curve for the model
+roc_aggregated <- roc_curve(fpr, tpr, thresholds, negative_count, total_count)
+
+roc_aggregated$sensitivities <- roc_aggregated$tpr
+roc_aggregated$specificities <- 1-roc_aggregated$fpr
+# Calculate the AUC
+roc_auc <- trapz(roc_aggregated$fpr, roc_aggregated$tpr)
+
+sprintf("ROC AUC aggregated from each node's results: %f", roc_auc)
+
+precision_recall_aggregated <- precision_recall_curve(
+  fpr, tpr, thresholds, negative_count, total_count)
+# Calculate the precision-recall AUC
+precision_recall_auc <- -trapz(
+  precision_recall_aggregated$recall, precision_recall_aggregated$pre)
+
+sprintf(
+  "Precision-Recall AUC aggregated from each node's results: %f",
+  precision_recall_auc
+)
+```
+
+### Visualize results using ROC plot
+
+```{r}
+new_rocs=data.frame()
+j=1
+roc_folds <- function(roc_obj){
+  new_rocs <<- rbind(new_rocs,data.frame(tpr=roc_obj$sensitivities,fpr=1-roc_obj$specificities,fold=paste0("Fold ",as.character(j)),color="gray"))
+  new_rocs <<- new_rocs[order(new_rocs$fold,new_rocs$fpr,new_rocs$tpr,decreasing = FALSE),]
+  j <<- j+1
+}
+lapply(rocs,function(x) roc_folds(x))
+rocPlot<- data.frame(tpr=roc_aggregated$tpr,fpr=roc_aggregated$fpr,fold="Average of Folds",color="notGray")
+
+Fig9_C <- ggplot(new_rocs,aes(x = fpr, y = tpr,group=fold))+
+  geom_line(aes(linetype=fold),colour='gray')+
+  geom_line(data=rocPlot, aes(x = fpr, y = tpr),linetype=1,linewidth=2)+
+  labs(x = "1 - Specificity", y = "Sensitivity")+
+  ggtitle(paste0("Average AUC=",format(round(roc_auc,2),nsmall=2)))+
+  scale_linetype_manual(values=c(2,3,4,5,6))+
+  theme_bw()+
+  theme(plot.title = element_text(size=9),axis.title = element_text(size=12),axis.text = element_text(size=12))+
+  guides(linetype=FALSE)+
+  xlim(0, 1)+
+  ylim(0,1)
+Fig9_C
+```
+
+# Save results
+
+```{r}
+save(Fig9_A,Fig9_B,Fig9_C,file="../Results/Figures/Fig9.RData")
+```
+

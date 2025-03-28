@@ -1,0 +1,297 @@
+---
+title: "New Olink Study"
+author: "Zaynab Mousavian"
+date: "7 August 2024"
+output:
+  html_document: default
+  pdf_document: default
+subtitle: Making feagures
+---
+
+```{r setup, include=FALSE}
+# Set global options for all chunks
+knitr::opts_chunk$set(
+  message = FALSE,
+  warning = FALSE
+)
+```
+
+# Loading R packages
+
+```{r}
+library(ggplot2)
+library(patchwork)
+library(ggpubr)
+library(grid)
+library(ComplexHeatmap)
+```
+
+# Function for removing redundant information including yaxis labels and legend 
+
+```{r}
+remove_axis_titles <- function(plot) {
+  plot +
+    theme(
+      axis.title.y = element_blank()
+    )
+}
+remove_axis_titles_x <- function(plot) {
+  plot +
+    theme(
+      axis.title.x = element_blank()
+    )
+}
+remove_legend <- function(plot) {
+  plot +
+    theme(
+      legend.position = "None"
+    )
+}
+```
+
+# Load all figures
+
+```{r}
+folder_path <- "../Results/Figures/"
+rdata_files <- list.files(path = folder_path, pattern = "\\.RData$", full.names = TRUE)
+
+# Load each .RData file
+for (file in rdata_files) {
+  load(file)
+}
+```
+
+# Making figure 2 for 12-marker
+
+```{r}
+Fig1_ssGSEA_discovery <- remove_legend(Fig1_ssGSEA_discovery)
+Fig1_ssGSEA_both <- remove_legend(Fig1_ssGSEA_both)
+Fig1_ssGSEA_sweden <- remove_legend(Fig1_ssGSEA_sweden)
+Fig1_ssGSEA_both <- remove_axis_titles(Fig1_ssGSEA_both)
+Fig1_ssGSEA_sweden <- remove_axis_titles(Fig1_ssGSEA_sweden)
+Fig1_ssGSEA_italy <- remove_axis_titles(Fig1_ssGSEA_italy)
+Fig1_ssGSEA <- Fig1_ssGSEA_discovery+ggtitle("A: Discovery cohort (Training)")+Fig1_ssGSEA_both+ggtitle("B: Validation cohort (Testing)")+Fig1_ssGSEA_sweden+ggtitle("C: Subcohort_1 (Sweden)")+Fig1_ssGSEA_italy+ggtitle("D: Subcohort_2 (Italy)")+
+  plot_layout(ncol=4)
+Fig1_ROCtext_discovery <- remove_legend(Fig1_ROCtext_discovery)
+Fig1_ROCtext_both <- remove_legend(Fig1_ROCtext_both)
+Fig1_ROCtext_sweden <- remove_legend(Fig1_ROCtext_sweden)
+Fig1_ROCtext_both <- remove_axis_titles(Fig1_ROCtext_both)
+Fig1_ROCtext_sweden <- remove_axis_titles(Fig1_ROCtext_sweden)
+Fig1_ROCtext_italy <- remove_axis_titles(Fig1_ROCtext_italy)
+Fig1_ROC <- Fig1_ROCtext_discovery+Fig1_ROCtext_both+Fig1_ROCtext_sweden+Fig1_ROCtext_italy+
+  plot_layout(ncol=4)
+Fig1 <- (Fig1_ssGSEA/Fig1_ROC)+
+  plot_layout(heights = c(1, 1)) 
+ggsave(Fig1,file="../Results/Figures/Manuscript/Figure 1.pdf",width=15, height = 10)
+```
+
+# Making supp figure 1 showing subtypes of active TB
+
+```{r}
+suppFig1_ssGSEA_sweden_subTypes_A <- remove_legend(suppFig1_ssGSEA_sweden_subTypes_A)
+suppFig1_ssGSEA_sweden_subTypes_B <- remove_axis_titles(suppFig1_ssGSEA_sweden_subTypes_B)
+suppFig1 <- suppFig1_ssGSEA_sweden_subTypes_A + suppFig1_ssGSEA_sweden_subTypes_B+
+  plot_layout(ncol=2)
+ggsave(suppFig1,file="../Results/Figures/Manuscript/Figure S1.pdf",width=10,height = 5)
+```
+
+# Making supp figure 2 for correlation with clinical variables
+
+```{r}
+load("../Results/Figures/Fig7_correlationplot.RData")
+legend_theme <- theme(legend.position = "bottom", 
+                      legend.direction = "horizontal")
+
+correlationplot_CRP_A <- remove_legend(correlationplot_CRP_A)
+correlationplot_CRP_A <- correlationplot_CRP_A+ggtitle("12-marker")
+correlationplot_ESR_A <- remove_legend(correlationplot_ESR_A)
+correlationplot_HB_A <- remove_legend(correlationplot_HB_A)
+correlationplot_ALB_A <- remove_legend(correlationplot_ALB_A)
+
+Fig7 <- correlationplot_CRP_A+correlationplot_ESR_A+correlationplot_HB_A+correlationplot_ALB_A+correlationplot_WBC_A+
+  plot_layout(widths = c(1,1,1,1,1))
+
+Fig7 <- Fig7+legend_theme
+ggsave(Fig7,file="../Results/Figures/Manuscript/Figure S2.pdf", width=20,height = 7)
+```
+
+
+# Making Figure 3 for 6 markers and best 4 markers 
+
+```{r}
+Fig2_ssGSEA_discovery_B <- remove_legend(Fig2_ssGSEA_discovery_B)
+Fig2_ssGSEA_both_B <- remove_legend(Fig2_ssGSEA_both_B)
+Fig2_ssGSEA_sweden_B <- remove_legend(Fig2_ssGSEA_sweden_B)
+Fig2_ssGSEA_both_B <- remove_axis_titles(Fig2_ssGSEA_both_B)
+Fig2_ssGSEA_sweden_B <- remove_axis_titles(Fig2_ssGSEA_sweden_B)
+Fig2_ssGSEA_italy_B <- remove_axis_titles(Fig2_ssGSEA_italy_B)
+Fig2_ssGSEA_B <- Fig2_ssGSEA_discovery_B+ggtitle("A: Discovery cohort (Training)")+Fig2_ssGSEA_both_B+ggtitle("B: Validation cohort (Testing)")+Fig2_ssGSEA_sweden_B+ggtitle("C: Subcohort_1 (Sweden)")+Fig2_ssGSEA_italy_B+ggtitle("D: Subcohort_2 (Italy)")+
+  plot_layout(ncol=4)
+
+Fig2_ROCtext_discovery_B <- remove_legend(Fig2_ROCtext_discovery_B)
+Fig2_ROCtext_both_B <- remove_legend(Fig2_ROCtext_both_B)
+Fig2_ROCtext_sweden_B <- remove_legend(Fig2_ROCtext_sweden_B)
+Fig2_ROCtext_both_B <- remove_axis_titles(Fig2_ROCtext_both_B)
+Fig2_ROCtext_sweden_B <- remove_axis_titles(Fig2_ROCtext_sweden_B)
+Fig2_ROCtext_italy_B <- remove_axis_titles(Fig2_ROCtext_italy_B)
+Fig2_ROCtext_B <- Fig2_ROCtext_discovery_B+Fig2_ROCtext_both_B+Fig2_ROCtext_sweden_B+Fig2_ROCtext_italy_B+
+  plot_layout(ncol=4)
+
+Fig2_ssGSEA_discovery_F <- remove_legend(Fig2_ssGSEA_discovery_F)
+Fig2_ssGSEA_both_F <- remove_legend(Fig2_ssGSEA_both_F)
+Fig2_ssGSEA_sweden_F <- remove_legend(Fig2_ssGSEA_sweden_F)
+Fig2_ssGSEA_both_F <- remove_axis_titles(Fig2_ssGSEA_both_F)
+Fig2_ssGSEA_sweden_F <- remove_axis_titles(Fig2_ssGSEA_sweden_F)
+Fig2_ssGSEA_italy_F <- remove_axis_titles(Fig2_ssGSEA_italy_F)
+Fig2_ssGSEA_F <- Fig2_ssGSEA_discovery_F+ggtitle("E: Discovery cohort (Training)")+Fig2_ssGSEA_both_F+ggtitle("F: Validation cohort (Testing)")+Fig2_ssGSEA_sweden_F+ggtitle("G: Subcohort_1 (Sweden)")+Fig2_ssGSEA_italy_F+ggtitle("H: Subcohort_2 (Italy)")+
+  plot_layout(ncol=4)
+
+Fig2_ROCtext_discovery_F <- remove_legend(Fig2_ROCtext_discovery_F)
+Fig2_ROCtext_both_F <- remove_legend(Fig2_ROCtext_both_F)
+Fig2_ROCtext_sweden_F <- remove_legend(Fig2_ROCtext_sweden_F)
+Fig2_ROCtext_both_F <- remove_axis_titles(Fig2_ROCtext_both_F)
+Fig2_ROCtext_sweden_F <- remove_axis_titles(Fig2_ROCtext_sweden_F)
+Fig2_ROCtext_italy_F <- remove_axis_titles(Fig2_ROCtext_italy_F)
+Fig2_ROCtext_F <- Fig2_ROCtext_discovery_F+Fig2_ROCtext_both_F+Fig2_ROCtext_sweden_F+Fig2_ROCtext_italy_F+
+  plot_layout(ncol=4)
+
+Fig2 <- (Fig2_ssGSEA_B/Fig2_ROCtext_B/Fig2_ssGSEA_F/Fig2_ROCtext_F)+
+  plot_layout(heights = c(1, 1,1,1)) 
+
+ggsave(Fig2,file="../Results/Figures/Manuscript/Figure 2.pdf",width=15, height = 20)
+```
+
+# Making supp figure 4 for 7 markers from Boruta
+
+```{r}
+Fig2_ssGSEA_discovery_A <- remove_legend(Fig2_ssGSEA_discovery_A)
+Fig2_ssGSEA_both_A <- remove_legend(Fig2_ssGSEA_both_A)
+Fig2_ssGSEA_sweden_A <- remove_legend(Fig2_ssGSEA_sweden_A)
+Fig2_ssGSEA_both_A <- remove_axis_titles(Fig2_ssGSEA_both_A)
+Fig2_ssGSEA_sweden_A <- remove_axis_titles(Fig2_ssGSEA_sweden_A)
+Fig2_ssGSEA_italy_A <- remove_axis_titles(Fig2_ssGSEA_italy_A)
+Fig2_ssGSEA_A <- Fig2_ssGSEA_discovery_A+ggtitle("A: Discovery cohort (Training)")+Fig2_ssGSEA_both_A+ggtitle("B: Validation cohort (Testing)")+Fig2_ssGSEA_sweden_A+ggtitle("C: Subcohort_1 (Sweden)")+Fig2_ssGSEA_italy_A+ggtitle("D: Subcohort_2 (Italy)")+
+  plot_layout(ncol=4)
+
+Fig2_ROCtext_discovery_A <- remove_legend(Fig2_ROCtext_discovery_A)
+Fig2_ROCtext_both_A <- remove_legend(Fig2_ROCtext_both_A)
+Fig2_ROCtext_sweden_A <- remove_legend(Fig2_ROCtext_sweden_A)
+Fig2_ROCtext_both_A <- remove_axis_titles(Fig2_ROCtext_both_A)
+Fig2_ROCtext_sweden_A <- remove_axis_titles(Fig2_ROCtext_sweden_A)
+Fig2_ROCtext_italy_A <- remove_axis_titles(Fig2_ROCtext_italy_A)
+Fig2_ROCtext_A <- Fig2_ROCtext_discovery_A+Fig2_ROCtext_both_A+Fig2_ROCtext_sweden_A+Fig2_ROCtext_italy_A+
+  plot_layout(ncol=4)
+
+suppFig3 <- (Fig2_ssGSEA_A/Fig2_ROCtext_A)+
+  plot_layout(heights = c(1, 1)) 
+
+ggsave(suppFig3,file="../Results/Figures/Manuscript/Figure S4.pdf",width=15, height = 10)
+```
+
+# Making supp figure 6 for all combinations of 4 out of 6
+
+```{r}
+combined_plot_discovery_4marker <- remove_legend(combined_plot_discovery_4marker)
+combined_plot_both_4marker<- remove_legend(combined_plot_both_4marker)
+combined_plot_sweden_4marker<- remove_legend(combined_plot_sweden_4marker)
+combined_plot_both_4marker <- remove_axis_titles(combined_plot_both_4marker)
+combined_plot_sweden_4marker <- remove_axis_titles(combined_plot_sweden_4marker)
+combined_plot_italy_4marker <- remove_axis_titles(combined_plot_italy_4marker)
+suppFig5 <- (combined_plot_discovery_4marker+ggtitle("A: Discovery cohort (Training)")+combined_plot_both_4marker+ggtitle("B: Validation cohort (Testing)")+combined_plot_sweden_4marker+ggtitle("C: Subcohort_1 (Sweden)")+combined_plot_italy_4marker)+ggtitle("D: Subcohort_2 (Italy)")+
+  plot_layout(ncol=4)
+ggsave(suppFig5,file="../Results/Figures/Manuscript/Figure S6.pdf",width=20, height = 5)
+```
+
+
+# Making supp figure 7 
+
+```{r}
+Fig5_ssGSEA_sweden <- remove_legend(Fig5_ssGSEA_sweden)
+Fig5_ssGSEA_sweden_B<- remove_legend(Fig5_ssGSEA_sweden_B)
+Fig5_ssGSEA_sweden_B <- remove_axis_titles(Fig5_ssGSEA_sweden_B)
+Fig5_ssGSEA_sweden_F <- remove_axis_titles(Fig5_ssGSEA_sweden_F)
+
+Fig5_ssGSEA_sweden <- Fig5_ssGSEA_sweden+Fig5_ssGSEA_sweden_B+Fig5_ssGSEA_sweden_F+
+  plot_layout(ncol=3)
+
+Fig5_correlationplot <- remove_legend(Fig5_correlationplot)
+Fig5_correlationplot_B<- remove_legend(Fig5_correlationplot_B)
+Fig5_correlationplot_B <- remove_axis_titles(Fig5_correlationplot_B)
+Fig5_correlationplot_F <- remove_axis_titles(Fig5_correlationplot_F)
+Fig5_correlation <- Fig5_correlationplot+ggtitle("")+Fig5_correlationplot_B+ggtitle("")+Fig5_correlationplot_F+ggtitle("")+
+  plot_layout(ncol=3)
+Fig5 <- (Fig5_ssGSEA_sweden/Fig5_correlation)+
+  plot_layout(heights = c(1,1))
+ggsave(Fig5,file="../Results/Figures/Manuscript/Figure S7.pdf",width = 10,height = 10)
+```
+
+# Making supp figure 8 for correlation between EDTA and heparin in individual marker
+
+```{r}
+suppFig11 <- Fig5_correlationplot_markers
+ggsave(suppFig11,file="../Results/Figures/Manuscript/Figure S8.pdf",width = 15,height = 15)
+```
+
+
+# Making supp figure 9 for all individual markers
+
+```{r}
+ggsave(Fig5_scatterplot_markers, file="../Results/Figures/Manuscript/Figure S9.pdf",width = 10,height = 10)
+```
+
+# Making figure 4
+
+```{r}
+Fig3_ssGSEA <- remove_legend(Fig3_ssGSEA)
+Fig3_ssGSEA_B<- remove_legend(Fig3_ssGSEA_B)
+Fig3_ssGSEA_B <- remove_axis_titles(Fig3_ssGSEA_B)
+Fig3_ssGSEA_F <- remove_axis_titles(Fig3_ssGSEA_F)
+Fig3_GSEA <- Fig3_ssGSEA+Fig3_ssGSEA_B+Fig3_ssGSEA_F
+
+heatmap_grob <- grid.grabExpr(draw(Fig3_heatmap))
+
+Fig3 <- Fig3_GSEA/ wrap_elements(heatmap_grob)+ggtitle("D")
+ggsave(Fig3,file="../Results/Figures/Manuscript/Figure 3.pdf",width = 10,height = 10)
+```
+
+
+# Making supp figure 10 for non TB ROC (cross validation on whole non TB and TB italy)
+
+```{r}
+Fig9_B <- remove_axis_titles(Fig9_B)
+Fig9_C <- remove_axis_titles(Fig9_C)
+Fig9 <- Fig9_A+Fig9_B+Fig9_C
+ggsave(Fig9,file="../Results/Figures/Manuscript/Figure S10.pdf", width=10,height = 3)
+```
+
+# Making figure 5 for comparison with other signatures
+
+```{r}
+combined_plot_discovery_comparison <- remove_legend(combined_plot_discovery_comparison)
+combined_plot_both_comparison<- remove_legend(combined_plot_both_comparison)
+combined_plot_sweden_comparison<- remove_legend(combined_plot_sweden_comparison)
+combined_plot_comparison <-combined_plot_discovery_comparison+ggtitle("A: Discovery cohort (Training)")+combined_plot_both_comparison+ggtitle("B: Validation cohort (Testing)")+combined_plot_sweden_comparison+ggtitle("C: Subcohort_1 (Sweden)")+combined_plot_italy_comparison+ggtitle("D: Subcohort_2 (Italy)")+
+  plot_layout(ncol=4) 
+Fig6_B <- remove_legend(Fig6_ssGSEA_TB+ggtitle("E"))+Fig6_pValue_TB+ggtitle("F")+
+  plot_layout(widths = c(5,0.5))
+Fig6_C <- remove_legend(Fig6_ssGSEA_nonTB+ggtitle("G"))+Fig6_pValue_nonTB+ggtitle("H")+
+  plot_layout(widths = c(5,0.5))
+Fig6 <- combined_plot_comparison/Fig6_B/Fig6_C+
+  plot_layout(heights = c(1,1,1),widths = c(1,1,1))
+ggsave(Fig6,file="../Results/Figures/Manuscript/Figure 4.pdf", width=15,height = 15)
+```
+
+# Making supp figure 11 for all individual markers
+
+```{r}
+suppFig2 <- (((suppFig2_ROCtext_discovery_IL6+ggtitle("A: Discovery cohort (Training)") + suppFig2_ROCtext_both_IL6+ggtitle("B: Validation cohort (Testing)")+ suppFig2_ROCtext_sweden_IL6+ggtitle("C: Subcohort_1 (Sweden)")+suppFig2_ROCtext_italy_IL6+ggtitle("D: Subcohort_2 (Italy)")+suppFig2_ROCtext_discovery_CDCP1+ggtitle("E: Discovery cohort (Training)") + suppFig2_ROCtext_both_CDCP1+ggtitle("F: Validation cohort (Testing)")+ suppFig2_ROCtext_sweden_CDCP1+ggtitle("G: Subcohort_1 (Sweden)")+suppFig2_ROCtext_italy_CDCP1+ggtitle("H: Subcohort_2 (Italy)"))+plot_layout(ncol=8))/
+  ((suppFig2_ROCtext_discovery_VEGFA + suppFig2_ROCtext_both_VEGFA+suppFig2_ROCtext_sweden_VEGFA+suppFig2_ROCtext_italy_VEGFA+suppFig2_ROCtext_discovery_MCP3 +suppFig2_ROCtext_both_MCP3+ suppFig2_ROCtext_sweden_MCP3+suppFig2_ROCtext_italy_MCP3)+plot_layout(ncol=8))/
+  ((suppFig2_ROCtext_discovery_IFNG + suppFig2_ROCtext_both_IFNG+suppFig2_ROCtext_sweden_IFNG+suppFig2_ROCtext_italy_IFNG+suppFig2_ROCtext_discovery_CXCL9 + suppFig2_ROCtext_both_CXCL9+ suppFig2_ROCtext_sweden_CXCL9+suppFig2_ROCtext_italy_CXCL9)+plot_layout(ncol=8))/
+  ((suppFig2_ROCtext_discovery_CCL19 + suppFig2_ROCtext_both_CCL19+suppFig2_ROCtext_sweden_CCL19+suppFig2_ROCtext_italy_CCL19+suppFig2_ROCtext_discovery_MMP1 + suppFig2_ROCtext_both_MMP1+ suppFig2_ROCtext_sweden_MMP1+suppFig2_ROCtext_italy_MMP1)+plot_layout(ncol=8))/
+((suppFig2_ROCtext_discovery_IL7 + suppFig2_ROCtext_both_IL7+suppFig2_ROCtext_sweden_IL7+suppFig2_ROCtext_italy_IL7+suppFig2_ROCtext_discovery_IL12B +suppFig2_ROCtext_both_IL12B+ suppFig2_ROCtext_sweden_IL12B+suppFig2_ROCtext_italy_IL12B)+plot_layout(ncol=8))/
+  ((suppFig2_ROCtext_discovery_CD40 + suppFig2_ROCtext_both_CD40+suppFig2_ROCtext_sweden_CD40+suppFig2_ROCtext_italy_CD40+suppFig2_ROCtext_discovery_PDL1 +suppFig2_ROCtext_both_PDL1 + suppFig2_ROCtext_sweden_PDL1+suppFig2_ROCtext_italy_PDL1)+plot_layout(ncol=8)))+
+  plot_layout(nrow=6)
+
+ggsave(suppFig2,file="../Results/Figures/Manuscript/Figure S11.pdf",width=20, height = 25)
+```
+

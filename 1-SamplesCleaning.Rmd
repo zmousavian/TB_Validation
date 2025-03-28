@@ -1,0 +1,186 @@
+---
+title: "New Olink Study"
+author: "Zaynab Mousavian"
+date: "19 June 2024"
+output:
+  html_document: default
+  pdf_document: default
+subtitle: Cleaning samples files
+---
+
+```{r setup, include=FALSE}
+# Set global options for all chunks
+knitr::opts_chunk$set(
+  message = FALSE,
+  warning = FALSE
+)
+```
+
+# Load packages
+
+```{r}
+library(readxl)
+library(tidyverse)
+library(OlinkAnalyze)
+```
+
+# Read samples information {.tabset}
+
+## first dataset
+
+```{r}
+npx_data_June19 <- read_NPX(filename = "../Data/Olink iscience/June-2019/NPX_data_files/Stimulated TB PBMCs (plasma samples)_NPX_LOD.xlsx")
+npx_data_Nov19 <- read_NPX(filename = "../Data/Olink iscience/Nov-2019/NPX_data_files/MTB_plasma_profiling_NPX_LOD.xlsx")
+npx_data_Jan20 <- read_NPX("../Data/Olink iscience/Jan-2020/NPX_data_files/TB_5_days_supernatant_NPX_LOD.xlsx")
+
+samples_first <- read_excel("../Data/Olink iscience/Samples-discovery.xlsx")
+samples_first <- samples_first %>% rename("Type"=Group)
+
+samples_first%>%
+  select(Type)%>%
+  table()
+
+npx_data_June19%>%
+  select(SampleID)%>%
+  unique()%>%
+  nrow()
+
+npx_data_June19 %>%
+  filter(SampleID%in%samples_first$SampleID)%>%
+  select(SampleID)%>%
+  unique()%>%
+  nrow()
+
+npx_data_Nov19%>%
+  select(SampleID)%>%
+  unique()%>%
+  nrow()
+
+npx_data_Nov19 %>%
+  filter(SampleID%in%samples_first$SampleID)%>%
+  select(SampleID)%>%
+  unique()%>%
+  nrow()
+
+npx_data_Jan20%>%
+  select(SampleID)%>%
+  unique()%>%
+  nrow()
+
+npx_data_Jan20 %>%
+  filter(SampleID%in%samples_first$SampleID)%>%
+  select(SampleID)%>%
+  unique()%>%
+  nrow()
+
+npx_data_Jan20 %>%
+  filter(!SampleID%in%samples_first$SampleID)%>%
+  select(SampleID)%>%
+  unique()%>%
+  as.vector()
+
+samples_first%>%
+  filter(is.na(Type))%>%
+  select(SampleID)%>%
+  unique()
+```
+
+## Second dataset
+
+```{r}
+npx_data_May22 <- read_NPX(filename = "../Data/Olink old validation/Plasma profiling May 2022/shared_with_user/NPX_data_files/TB validation_NPX_LOD.xlsx")
+
+samples_second <- read_excel("../Data/Olink old validation/Samples-validation-old run.xlsx")
+samples_second <- samples_second %>% rename("SampleID"=`Sample ID`,"Type"=Diagnosis)
+
+samples_second%>%
+  select(Type)%>%
+  table()
+
+npx_data_May22%>%
+  select(SampleID)%>%
+  unique()%>%
+  nrow()
+
+npx_data_May22 %>%
+  filter(SampleID%in%samples_second$SampleID)%>%
+  select(SampleID)%>%
+  unique()%>%
+  nrow()
+
+npx_data_May22 %>%
+  filter(!SampleID%in%samples_second$SampleID)%>%
+  select(SampleID)%>%
+  unique()
+
+samples_second%>%
+  filter(is.na(Type))%>%
+  select(SampleID)%>%
+  unique()
+
+samples_second%>%
+  filter(Type=="?")%>%
+  select(SampleID)%>%
+  unique()
+```
+
+## Third-heparin dataset
+
+```{r}
+npx_data_heparin <- read_NPX(filename ="../Data/heparin_Data_NPX_LOD_wide.xlsx")
+
+samples_third <- read_excel(path="../Data/Plasma profiling_Feb_2024_final.xlsx",sheet = "Samples and randomization")
+samples_third <- samples_third %>% rename("SampleID"=`Sample ID`,"Type"=`TB status`) 
+
+samples_third%>%
+  select(Type)%>%
+  table()
+
+npx_data_heparin%>%
+  select(SampleID)%>%
+  unique()%>%
+  nrow()
+
+npx_data_heparin %>%
+  filter(SampleID%in%samples_third$SampleID)%>%
+  select(SampleID)%>%
+  unique()%>%
+  nrow()
+
+npx_data_heparin %>%
+  filter(!SampleID%in%samples_third$SampleID)%>%
+  select(SampleID)%>%
+  unique()
+
+samples_third%>%
+  filter(is.na(Type))%>%
+  select(SampleID)%>%
+  unique()
+```
+
+## Third-edta dataset
+
+```{r}
+npx_data_edta <- read_NPX(filename ="../Data/edta_Data_NPX_LOD_wide.xlsx")
+
+npx_data_edta%>%
+  select(SampleID)%>%
+  unique()%>%
+  nrow()
+
+npx_data_edta %>%
+  filter(SampleID%in%samples_third$SampleID)%>%
+  select(SampleID)%>%
+  unique()%>%
+  nrow()
+
+npx_data_edta %>%
+  filter(!SampleID%in%samples_third$SampleID)%>%
+  select(SampleID)%>%
+  unique()
+```
+
+```{r}
+save(samples_first,samples_second,samples_third,file="../Data/ReadyData/AllDatasets-Samples.RData")
+```
+

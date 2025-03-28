@@ -1,0 +1,400 @@
+---
+title: "New Olink Study"
+author: "Zaynab Mousavian"
+date: "15 August 2024"
+output:
+  html_document: default
+  pdf_document: default
+subtitle: Comparison with other signatures with ROC
+---
+
+```{r setup, include=FALSE}
+# Set global options for all chunks
+knitr::opts_chunk$set(
+  message = FALSE,
+  warning = FALSE
+)
+```
+
+# Load R packages
+
+```{r message=FALSE, warning=FALSE}
+library(readxl)
+library(dplyr)
+library(reshape2)
+library(ggplot2)
+library(corto)
+library(OlinkAnalyze)
+library(readxl)
+library(dplyr)
+library(reshape2)
+library(ggplot2)
+library(corto)
+library(patchwork)
+library(ggpubr)
+library(tidyverse)
+```
+# Definition of all signatures
+```{r}
+signatures=list()
+signatures[[1]]=c("CXCL10") #pink
+signatures[[2]]=c("IFN-gamma") #light blue
+signatures[[3]]=c("MCP-1") #orange
+signatures[[4]]=c("CXCL9") # light brown
+signatures[[5]]=c("CXCL11")# dark grey
+signatures[[6]]=c("TNF")# light turquoise
+signatures[[7]]=c("IFN-gamma","ADA")#purple
+signatures[[8]]=c("IL6","IL10","CXCL10") #yellow
+signatures[[9]]=c("IFN-gamma","ADA","CXCL10")#dark turquoise
+signatures[[10]]=c("IL6","IL8","IL18","VEGFA") #dark brown
+signatures[[11]]=c("CDCP1","IFN-gamma","CXCL9","VEGFA")#green
+signatures[[12]]=c("MCP-3","IFN-gamma","CXCL9","VEGFA","IL6","CDCP1") #blue
+signatures[[13]]=c("MCP-3","IFN-gamma","CXCL9","VEGFA","IL6","CDCP1","CCL19","CD40","IL7","MMP-1","PD-L1","IL-12B") #red
+combined_strings <- unlist(lapply(signatures, paste, collapse = "+"))
+combined_strings[11]="Our 4-marker signature"
+combined_strings[12]="Our 6-marker signature"
+combined_strings[13]="Our 12-marker signature"
+names(signatures)=combined_strings
+color_codes = c("#F781BF","lightblue", "#FF7F00", 
+             "#A6761D", "#666666", "#40E0D0","#CC79A7", "#FFD700","#00BFC4", 
+            "#8C564B","#4DAF4A","#377EB8","#E41A1C")
+names(color_codes) <- combined_strings
+```
+
+# Load samples data
+
+```{r}
+load("../Data/ReadyData/AllDatasets-Samples.RData")
+```
+
+# Which data?{.tabset}
+
+## nonTB italy
+
+### read data
+```{r}
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-third-heparin-nonTB.RData")
+dat_Expr_nonTB_italy <- t(olink)
+groups_nonTB_italy <- samples_third[match(colnames(dat_Expr_nonTB_italy),samples_third$SampleID),"modifiedType",drop=TRUE]
+
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-second-italy.RData")
+dat_Expr_TB_italy <- t(olink)
+groups_TB_italy <- samples_second[match(colnames(dat_Expr_TB_italy),samples_second$SampleID),"modifiedType",drop=TRUE]
+
+dat_Expr <- dat_Expr_nonTB_italy%>%
+  cbind(dat_Expr_TB_italy)
+groups <- c(groups_nonTB_italy,groups_TB_italy)
+```
+
+### ssGSEA
+
+```{r}
+final_GSE_results <- data.frame()
+
+GSE_results <- ssgsea(dat_Expr,signatures,scale = TRUE, minsize = 12)
+final_GSE_results <- GSE_results
+
+GSE_results <- ssgsea(dat_Expr,signatures,scale = TRUE, minsize = 6)
+final_GSE_results <- final_GSE_results%>%
+  rbind("Our 6-marker signature"=GSE_results[c("Our 6-marker signature"),])
+
+GSE_results <- ssgsea(dat_Expr,signatures,scale = TRUE, minsize = 4)
+final_GSE_results <- final_GSE_results%>%
+  rbind("Our 4-marker signature"=GSE_results[c("Our 4-marker signature"),])
+
+GSE_results <- ssgsea(dat_Expr,signatures,scale = TRUE, minsize = 4)
+final_GSE_results <- final_GSE_results%>%
+  rbind("IL6+IL8+IL18+VEGFA"=GSE_results[combined_strings[10],])
+
+GSE_results <- ssgsea(dat_Expr,signatures,scale = TRUE, minsize = 3)
+final_GSE_results <- final_GSE_results%>%
+  rbind(GSE_results[combined_strings[c(8,9)],])
+
+GSE_results <- ssgsea(dat_Expr,signatures,scale = TRUE, minsize = 2)
+final_GSE_results <- final_GSE_results%>%
+  rbind("IFN-gamma+ADA"=GSE_results[combined_strings[7],])
+
+GSE_results <- ssgsea(dat_Expr,signatures,scale = TRUE, minsize = 1)
+final_GSE_results <- final_GSE_results%>%
+  rbind(GSE_results[combined_strings[1:6],])
+```
+
+### make data ready for boxplot plot
+
+```{r}
+final_GSE_results <- final_GSE_results%>%
+  rbind(colnames(dat_Expr))%>%
+  rbind(as.character(groups))%>%
+  t()%>%
+  as.data.frame()
+
+names(final_GSE_results)[14:15] <- c("SampleID","Type")
+final_GSE_results[, c(1:13)] <- lapply(final_GSE_results[, c(1:13)], as.numeric)
+nonTB_groups <- "nonTB"
+
+final_GSE_results <- final_GSE_results%>%
+  mutate(modifiedType = case_when(
+    str_detect(Type,"Pneumonia") ~ "nonTB",
+    str_detect(Type,"Excavated pneumonia") ~ "nonTB",
+    str_detect(Type,"MAC") ~ "nonTB",
+    str_detect(Type,"Lung adenocarcinomas") ~ "nonTB",
+    TRUE ~ Type))
+
+
+final_GSE_results$modifiedType <- factor(final_GSE_results$modifiedType, levels=c("Active","nonTB","Latent","Control"))
+```
+
+### make data ready for pvalue plot
+
+```{r}
+data_for_ttest <- final_GSE_results%>%
+  filter(modifiedType=="nonTB"|modifiedType=="Active")%>%
+  select(-c(SampleID,Type))
+
+groups=data_for_ttest%>%
+  select(modifiedType)%>%
+  unlist()
+
+data_for_ttest <- data_for_ttest%>%
+  select(-modifiedType)
+
+pValues=apply(data_for_ttest,2,function(x) wilcox.test(x[groups=="Active"],x[groups=="nonTB"])$p.value)%>%unlist()
+
+ttest_result_plot <- data.frame(
+  variable = names(pValues),
+  p_value = as.vector(pValues),
+  stringsAsFactors = FALSE 
+)
+
+ttest_result_plot$variable <- factor(ttest_result_plot$variable,levels=unique(combined_strings))
+```
+
+### Visulize pvalue plot
+
+```{r}
+ttest_result_plot <- ttest_result_plot%>%
+  mutate(Sig=case_when(variable=="Our 12-marker signature"~"Yes",
+                       variable=="Our 6-marker signature"~"Yes",
+                       variable=="Our 4-marker signature"~"Yes",
+                        TRUE~"NO"))%>%
+  mutate(Size=case_when(variable=="Our 12-marker signature"~12,
+                       variable=="Our 6-marker signature"~6,
+                       variable=="Our 4-marker signature"~4,
+                      variable==combined_strings[4]~length(unlist(strsplit(combined_strings[4],"\\+"))),
+                      variable==combined_strings[5]~length(unlist(strsplit(combined_strings[5],"\\+"))),
+                      variable==combined_strings[6]~length(unlist(strsplit(combined_strings[6],"\\+"))),
+                      variable==combined_strings[7]~length(unlist(strsplit(combined_strings[7],"\\+"))),
+                      variable==combined_strings[8]~length(unlist(strsplit(combined_strings[8],"\\+"))),
+                      variable==combined_strings[9]~length(unlist(strsplit(combined_strings[9],"\\+"))),
+                      variable==combined_strings[10]~length(unlist(strsplit(combined_strings[10],"\\+"))),
+                      variable==combined_strings[11]~length(unlist(strsplit(combined_strings[11],"\\+"))),
+                      variable==combined_strings[12]~length(unlist(strsplit(combined_strings[12],"\\+"))),
+                      variable==combined_strings[13]~length(unlist(strsplit(combined_strings[13],"\\+")))))%>%
+  arrange(Size,Sig)
+
+customColors = c("Yes"="red","No"="black")
+
+ttest_result_plot$FDR=p.adjust(ttest_result_plot$p_value)
+Fig6_pValue_nonTB<-ggplot(ttest_result_plot,aes(x=-log10(FDR),y=variable,colour = Sig))+
+  geom_point()+
+  scale_color_manual(values = customColors)+
+  geom_vline(xintercept = 2,linetype="dashed",color="red")+
+  labs(x="-log10(FDR)",y="",colour="")+
+  guides(colour=FALSE)+
+  theme_bw()+
+  theme(axis.text.y = element_text(color = color_codes),
+        axis.title.x = element_text(vjust=0.5))
+```
+
+### Visulize box plot
+
+```{r}
+final_GSE_results <- melt(final_GSE_results, id.vars = c("SampleID", "Type","modifiedType"))
+final_GSE_results$variable <- factor(final_GSE_results$variable,levels=rev(unique(combined_strings)))
+
+Fig6_ssGSEA_nonTB <- ggplot(final_GSE_results,aes(x=variable,y=value,fill=modifiedType))+
+  geom_boxplot(outlier.shape = NA,alpha=0.6)+
+  geom_jitter(size = 1, alpha = 1, aes(color=modifiedType),position = position_jitterdodge(jitter.width = 0.2, dodge.width = 0.8)) + 
+  scale_color_manual(values = c("#2F8AC4", "#A3B574","#E48725", "#A5AA99"))+
+  scale_fill_manual(values = c("#2F8AC4","#A3B574", "#E48725", "#A5AA99"))+
+  labs(y=paste0("Enrichment score"),x=" ",fill=" ")+
+  guides(color = "none")+
+  theme(axis.text.x = element_text(size = 12,angle = 90,hjust=1,vjust=0.5,color=rev(color_codes)),  # Increase size of x-axis text
+    axis.text.y = element_text(size = 12),
+    axis.title.y = element_text(size=12),
+    panel.background = element_rect(fill = "white", color = NA),  
+    plot.background = element_rect(fill = "white", color = NA),  
+    panel.grid.major = element_blank(),  
+    panel.grid.minor = element_blank(),
+    panel.border = element_rect(color = "black", fill = NA)
+    )+
+ ylim(-0.5,5)
+```
+
+## TB both
+
+### read data
+```{r}
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-third-heparin.RData")
+dat_Expr_third_heparin <- t(olink)
+# dat_Expr_third_heparin <- dat_Expr_third_heparin[,!colnames(dat_Expr_third_heparin)%in%c("TB0166.0","TB0102","TB0161")]
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-second-sweden.RData")
+dat_Expr_second_sweden <- t(olink)
+# dat_Expr_second_sweden <- dat_Expr_second_sweden[,!colnames(dat_Expr_second_sweden)%in%c("TB0061")]
+
+groups_third_heparin <- samples_third[match(colnames(dat_Expr_third_heparin),samples_third$SampleID),"modifiedType",drop=TRUE]
+groups_second_sweden <- samples_second[match(colnames(dat_Expr_second_sweden),samples_second$SampleID),"modifiedType",drop=TRUE]
+
+dat_Expr_sweden <- dat_Expr_third_heparin%>%
+  cbind(dat_Expr_second_sweden)
+groups_sweden <- c(groups_third_heparin,groups_second_sweden)
+
+l=load("../Data/ReadyData-withoutFilteringProteins/ReadyData-second-italy.RData")
+dat_Expr_italy <- t(olink)
+groups_italy <- samples_second[match(colnames(dat_Expr_italy),samples_second$SampleID),"modifiedType",drop=TRUE]
+
+dat_Expr <- dat_Expr_sweden%>%
+  cbind(dat_Expr_italy)
+groups <- c(groups_sweden,groups_italy)
+```
+
+
+### ssGSEA
+
+```{r}
+final_GSE_results <- data.frame()
+
+GSE_results <- ssgsea(dat_Expr,signatures,scale = TRUE, minsize = 12)
+final_GSE_results <- GSE_results
+
+GSE_results <- ssgsea(dat_Expr,signatures,scale = TRUE, minsize = 6)
+final_GSE_results <- final_GSE_results%>%
+  rbind("Our 6-marker signature"=GSE_results[c("Our 6-marker signature"),])
+
+GSE_results <- ssgsea(dat_Expr,signatures,scale = TRUE, minsize = 4)
+final_GSE_results <- final_GSE_results%>%
+  rbind("Our 4-marker signature"=GSE_results[c("Our 4-marker signature"),])
+
+GSE_results <- ssgsea(dat_Expr,signatures,scale = TRUE, minsize = 4)
+final_GSE_results <- final_GSE_results%>%
+  rbind("IL6+IL8+IL18+VEGFA"=GSE_results[combined_strings[10],])
+
+GSE_results <- ssgsea(dat_Expr,signatures,scale = TRUE, minsize = 3)
+final_GSE_results <- final_GSE_results%>%
+  rbind(GSE_results[combined_strings[c(8,9)],])
+
+GSE_results <- ssgsea(dat_Expr,signatures,scale = TRUE, minsize = 2)
+final_GSE_results <- final_GSE_results%>%
+  rbind("IFN-gamma+ADA"=GSE_results[combined_strings[7],])
+
+GSE_results <- ssgsea(dat_Expr,signatures,scale = TRUE, minsize = 1)
+final_GSE_results <- final_GSE_results%>%
+  rbind(GSE_results[combined_strings[1:6],])
+```
+
+### make data ready for boxplot 
+
+```{r}
+final_GSE_results <- final_GSE_results%>%
+  rbind(colnames(dat_Expr))%>%
+  rbind(as.character(groups))%>%
+  t()%>%
+  as.data.frame()
+
+names(final_GSE_results)[14:15] <- c("SampleID","Type")
+final_GSE_results[, c(1:13)] <- lapply(final_GSE_results[, c(1:13)], as.numeric)
+final_GSE_results$Type <- factor(final_GSE_results$Type, levels=c("Active","Latent","Control"))
+```
+
+### make data ready for pvalue plot
+
+```{r}
+data_for_ttest <- final_GSE_results%>%
+  filter(Type=="Latent"|Type=="Active")%>%
+  select(-c(SampleID))
+
+groups=data_for_ttest%>%
+  select(Type)%>%
+  unlist()
+
+data_for_ttest <- data_for_ttest%>%
+  select(-Type)
+
+pValues=apply(data_for_ttest,2,function(x) wilcox.test(x[groups=="Active"],x[groups=="Latent"])$p.value)%>%unlist()
+
+ttest_result_plot <- data.frame(
+  variable = names(pValues),
+  p_value = as.vector(pValues),
+  stringsAsFactors = FALSE 
+)
+
+ttest_result_plot$variable <- factor(ttest_result_plot$variable,levels=unique(combined_strings))
+```
+
+### Visulize pvalue plot
+
+```{r}
+ttest_result_plot <- ttest_result_plot%>%
+  mutate(Sig=case_when(variable=="Our 12-marker signature"~"Yes",
+                       variable=="Our 6-marker signature"~"Yes",
+                       variable=="Our 4-marker signature"~"Yes",
+                        TRUE~"NO"))%>%
+  mutate(Size=case_when(variable=="Our 12-marker signature"~12,
+                       variable=="Our 6-marker signature"~6,
+                       variable=="Our 4-marker signature"~4,
+                      variable==combined_strings[4]~length(unlist(strsplit(combined_strings[4],"\\+"))),
+                      variable==combined_strings[5]~length(unlist(strsplit(combined_strings[5],"\\+"))),
+                      variable==combined_strings[6]~length(unlist(strsplit(combined_strings[6],"\\+"))),
+                      variable==combined_strings[7]~length(unlist(strsplit(combined_strings[7],"\\+"))),
+                      variable==combined_strings[8]~length(unlist(strsplit(combined_strings[8],"\\+"))),
+                      variable==combined_strings[9]~length(unlist(strsplit(combined_strings[9],"\\+"))),
+                      variable==combined_strings[10]~length(unlist(strsplit(combined_strings[10],"\\+"))),
+                      variable==combined_strings[11]~length(unlist(strsplit(combined_strings[11],"\\+"))),
+                      variable==combined_strings[12]~length(unlist(strsplit(combined_strings[12],"\\+"))),
+                      variable==combined_strings[13]~length(unlist(strsplit(combined_strings[13],"\\+")))))%>%
+  arrange(Size,Sig)
+
+customColors = c("Yes"="red","No"="black")
+
+ttest_result_plot$FDR=p.adjust(ttest_result_plot$p_value)
+Fig6_pValue_TB <- ggplot(ttest_result_plot,aes(x=-log10(FDR),y=variable,colour = Sig))+
+  geom_point()+
+  scale_color_manual(values = customColors)+
+  geom_vline(xintercept = 2,linetype="dashed",color="red")+
+  labs(x="-log10(FDR)",y="",colour="")+
+  guides(colour=FALSE)+
+  theme_bw()+
+  theme(axis.text.y = element_text(color = color_codes),
+        axis.title.x = element_text(vjust=0.5))
+```
+
+### Visulize boxplot
+
+```{r}
+final_GSE_results <- melt(final_GSE_results, id.vars = c("SampleID", "Type"))
+final_GSE_results$variable <- factor(final_GSE_results$variable,levels=rev(unique(combined_strings)))
+Fig6_ssGSEA_TB <- ggplot(final_GSE_results,aes(x=variable,y=value,fill=Type))+
+  geom_boxplot(outlier.shape = NA,alpha=0.6)+
+  geom_jitter(size = 1, alpha = 1, aes(color=Type),position = position_jitterdodge(jitter.width = 0.2, dodge.width = 0.8)) + 
+  scale_color_manual(values = c("#2F8AC4","#E48725", "#A5AA99"))+
+  scale_fill_manual(values = c("#2F8AC4", "#E48725", "#A5AA99"))+
+  labs(y=paste0("Enrichment score"),x=" ",fill=" ")+
+  guides(color = "none")+
+  theme(axis.text.x = element_text(size = 12,angle = 90,hjust=1,vjust=0.5,color = rev(color_codes)),  # Increase size of x-axis text
+    axis.text.y = element_text(size = 12),
+    axis.title.y = element_text(size=12),
+    panel.background = element_rect(fill = "white", color = NA),  
+    plot.background = element_rect(fill = "white", color = NA),  
+    panel.grid.major = element_blank(),  
+    panel.grid.minor = element_blank(),
+    panel.border = element_rect(color = "black", fill = NA)
+    )+
+ ylim(-0.5,5)
+```
+
+# Save data
+
+```{r}
+save(Fig6_ssGSEA_TB,Fig6_pValue_TB,Fig6_ssGSEA_nonTB,Fig6_pValue_nonTB,file="../Results/Figures/Fig6_GSEA.RData")
+```
+

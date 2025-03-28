@@ -1,0 +1,2762 @@
+---
+title: "New Olink Study"
+author: "Zaynab Mousavian"
+date: "7 August 2024"
+output:
+  html_document: default
+  pdf_document: default
+subtitle: ssGSEA plots
+---
+
+```{r setup, include=FALSE}
+# Set global options for all chunks
+knitr::opts_chunk$set(
+  message = FALSE,
+  warning = FALSE
+)
+```
+
+# Loading R packages
+
+```{r}
+library(OlinkAnalyze)
+library(readxl)
+library(dplyr)
+library(reshape2)
+library(ggplot2)
+library(corto)
+library(patchwork)
+library(ggpubr)
+library(tidyverse)
+```
+
+# Function for boxplot visualization
+
+```{r}
+ssGSEA_boxplot_func <- function(data, xaxis, yaxis, group){
+  plot <- ggplot(data,aes(x=.data[[xaxis]],y=.data[[yaxis]],fill=.data[[group]]))+
+  geom_boxplot(outlier.shape = NA,alpha=0.6)+
+  geom_jitter(width = 0.1, size = 2, alpha = 1, aes(color=.data[[group]])) + 
+  scale_color_manual(values = c("#2F8AC4", "#E48725", "#A5AA99"),labels = c("Active" = "TB Disease","Latent" = "TB Infection","Control"="IGRA- Contact"))+
+  scale_fill_manual(values = c("#2F8AC4", "#E48725", "#A5AA99"))+
+  labs(y=paste0("Enrichment score"),x=" ",color=" ")+
+  guides(fill = "none")+
+  theme(axis.text.x = element_blank(),  # Increase size of x-axis text
+    axis.text.y = element_text(size = 12),
+    axis.title.y = element_text(size=12),
+    panel.background = element_rect(fill = "white", color = NA),  
+    plot.background = element_rect(fill = "white", color = NA),  
+    panel.grid.major = element_blank(),  
+    panel.grid.minor = element_blank(),
+    panel.border = element_rect(color = "black", fill = NA)
+    )+
+    ylim(-0.5,3.5)
+  return(plot)
+}
+```
+
+
+
+# Function for boxplot visualization with subanalysis
+
+```{r}
+ssGSEA_boxplot_func_subanalysis <- function(data, xaxis, yaxis, group, subanalysis){
+  plot <- ggplot(data,aes(x=.data[[xaxis]],y=.data[[yaxis]],fill=.data[[group]]))+
+  geom_boxplot(outlier.shape = NA,alpha=0.6)+
+  geom_jitter(width = 0.1, size = 2, alpha = 1, aes(color=.data[[subanalysis]])) + 
+  scale_color_manual(values = c("#2F8AC4", "#E48725", "#A5AA99","red"),labels = c("Active" = "TB Disease","Latent" = "TB Infection","Control"="IGRA- Contact","Primary TB"="Primary TB"))+
+  scale_fill_manual(values = c("#2F8AC4", "#E48725", "#A5AA99"))+
+  labs(y=paste0("Enrichment score"),x=" ",color=" ")+
+  guides(fill="none")+
+  theme(axis.text.x = element_text(size = 12),  # Increase size of x-axis text
+    axis.text.y = element_text(size = 12),
+    axis.title.y = element_text(size=12),
+    panel.background = element_rect(fill = "white", color = NA),  
+    plot.background = element_rect(fill = "white", color = NA),  
+    panel.grid.major = element_blank(),  
+    panel.grid.minor = element_blank(),
+    panel.border = element_rect(color = "black", fill = NA)
+    )+
+    ylim(-0.5,4)
+  return(plot)
+}
+
+```
+
+
+# Function for boxplot visualization for portugal
+
+```{r}
+ssGSEA_boxplot_func_portugal <- function(data, xaxis, yaxis, group){
+  plot <- ggplot(data,aes(x=.data[[xaxis]],y=.data[[yaxis]],fill=.data[[group]]))+
+  geom_boxplot(outlier.shape = NA,alpha=0.6)+
+  geom_jitter(width = 0.1, size = 2, alpha = 1, aes(color=.data[[group]])) + 
+  scale_color_manual(values = c("#2F8AC4",  "#A5AA99"),labels = c("Active" = "TB Disease","Control"="IGRA- Contact"))+
+  scale_fill_manual(values = c("#2F8AC4",  "#A5AA99"))+
+  labs(y=paste0("Enrichment score"),x=" ",color=" ")+
+  guides(fill = "none")+
+  theme(axis.text.x = element_blank(),  # Increase size of x-axis text
+    axis.text.y = element_text(size = 12),
+    axis.title.y = element_text(size=12),
+    panel.background = element_rect(fill = "white", color = NA),  
+    plot.background = element_rect(fill = "white", color = NA),  
+    panel.grid.major = element_blank(),  
+    panel.grid.minor = element_blank(),
+    panel.border = element_rect(color = "black", fill = NA)
+    )+
+    ylim(-0.5,3.5)
+  return(plot)
+}
+```
+
+
+# load data
+```{r}
+l=load("../Data/ReadyData/AllDatasets-Samples.RData")
+```
+
+# which signature {.tabset}
+
+## 12-marker
+
+### load signature
+
+```{r}
+load(file="../Data/ReadyData-withoutFilteringProteins/generated for iScience/0.3-pearson-modules.RData")
+modules[[4]]=modules[[4]][-c(6,8,12,14)]
+names(modules)=c("1","2","3","Signature","5")
+```
+
+### which data {.tabset}
+
+#### TB discovery sweden
+
+##### read data
+
+```{r}
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-discovery.RData")
+dat_Expr <- t(olink)
+groups <- samples_first[match(colnames(dat_Expr),samples_first$SampleID),"modifiedType",drop=TRUE]
+```
+
+##### ssGSEA
+
+```{r}
+GSE_results <- ssgsea(dat_Expr,modules,scale = FALSE, minsize = 12)
+GSE_results <- GSE_results["Signature",]
+
+GSE_results <- GSE_results%>%
+  rbind(colnames(dat_Expr))%>%
+  rbind(as.character(groups))%>%
+  t()%>%
+  as.data.frame()
+
+names(GSE_results) <- c("Score","SampleID","Type")
+GSE_results$Score <- as.numeric(GSE_results$Score)
+GSE_results$Type <- factor(GSE_results$Type, levels=c("Active","Latent","Control"))
+
+Fig1_ssGSEA_discovery <- ssGSEA_boxplot_func(GSE_results,"Type","Score","Type")
+
+Fig1_ssGSEA_discovery+
+  stat_compare_means(
+  method = "t.test",
+  comparisons = list(c("Active", "Latent"), c("Latent", "Control"),c("Active", "Control")),
+  label = "p.format",   
+  size = 5,
+  vjust = 0.5
+)
+
+Fig1_ssGSEA_discovery  <- Fig1_ssGSEA_discovery+
+  stat_compare_means(
+  method = "t.test",
+  comparisons = list(c("Active", "Latent"), c("Latent", "Control"),c("Active", "Control")),
+  label = "p.signif",   
+  size = 5,
+  vjust = 0.5
+)+
+  ggtitle("Discovery")
+
+save(Fig1_ssGSEA_discovery,file="../Results/Figures/Fig1_ssGSEA_discovery.RData")
+```
+
+
+#### TB both
+
+##### read data
+
+```{r}
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-third-heparin.RData")
+dat_Expr_third_heparin <- t(olink)
+# dat_Expr_third_heparin <- dat_Expr_third_heparin[,!colnames(dat_Expr_third_heparin)%in%c("TB0166.0","TB0102","TB0161")]
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-second-sweden.RData")
+dat_Expr_second_sweden <- t(olink)
+# dat_Expr_second_sweden <- dat_Expr_second_sweden[,!colnames(dat_Expr_second_sweden)%in%c("TB0061")]
+
+groups_third_heparin <- samples_third[match(colnames(dat_Expr_third_heparin),samples_third$SampleID),"modifiedType",drop=TRUE]
+groups_second_sweden <- samples_second[match(colnames(dat_Expr_second_sweden),samples_second$SampleID),"modifiedType",drop=TRUE]
+
+dat_Expr_sweden <- dat_Expr_third_heparin%>%
+  cbind(dat_Expr_second_sweden)
+groups_sweden <- c(groups_third_heparin,groups_second_sweden)
+
+l=load("../Data/ReadyData-withoutFilteringProteins/ReadyData-second-italy.RData")
+dat_Expr_italy <- t(olink)
+groups_italy <- samples_second[match(colnames(dat_Expr_italy),samples_second$SampleID),"modifiedType",drop=TRUE]
+
+dat_Expr <- dat_Expr_sweden%>%
+  cbind(dat_Expr_italy)
+groups <- c(groups_sweden,groups_italy)
+```
+
+##### ssGSEA
+
+```{r}
+GSE_results <- ssgsea(dat_Expr,modules,scale = FALSE, minsize = 12)
+GSE_results <- GSE_results["Signature",]
+
+GSE_results <- GSE_results%>%
+  rbind(colnames(dat_Expr))%>%
+  rbind(as.character(groups))%>%
+  t()%>%
+  as.data.frame()
+
+names(GSE_results) <- c("Score","SampleID","Type")
+GSE_results$Score <- as.numeric(GSE_results$Score)
+GSE_results$Type <- factor(GSE_results$Type, levels=c("Active","Latent","Control"))
+
+Fig1_ssGSEA_both <- ssGSEA_boxplot_func(GSE_results,"Type","Score","Type")
+
+Fig1_ssGSEA_both+
+  stat_compare_means(
+  method = "t.test",
+  comparisons = list(c("Active", "Latent"), c("Latent", "Control"),c("Active", "Control")),
+  label = "p.format",   
+  size = 5,
+  vjust = 0.5
+)
+
+Fig1_ssGSEA_both  <- Fig1_ssGSEA_both+
+  stat_compare_means(
+  method = "t.test",
+  comparisons = list(c("Active", "Latent"), c("Latent", "Control"),c("Active", "Control")),
+  label = "p.signif",   
+  size = 5,
+  vjust = 0.5
+)+
+  ggtitle("Discovery")
+
+save(Fig1_ssGSEA_both,file="../Results/Figures/Fig1_ssGSEA_both.RData")
+```
+
+
+#### TB sweden
+
+##### read data
+
+```{r}
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-third-heparin.RData")
+dat_Expr_third_heparin <- t(olink)
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-second-sweden.RData")
+dat_Expr_second_sweden <- t(olink)
+
+groups_third_heparin <- samples_third[match(colnames(dat_Expr_third_heparin),samples_third$SampleID),"modifiedType",drop=TRUE]
+groups_second_sweden <- samples_second[match(colnames(dat_Expr_second_sweden),samples_second$SampleID),"modifiedType",drop=TRUE]
+
+dat_Expr <- dat_Expr_third_heparin%>%
+  cbind(dat_Expr_second_sweden)
+groups <- c(groups_third_heparin,groups_second_sweden)
+```
+
+##### ssGSEA
+
+```{r}
+GSE_results <- ssgsea(dat_Expr,modules,scale = FALSE, minsize = 12)
+GSE_results <- GSE_results["Signature",]
+
+GSE_results <- GSE_results%>%
+  rbind(colnames(dat_Expr))%>%
+  rbind(as.character(groups))%>%
+  t()%>%
+  as.data.frame()
+
+names(GSE_results) <- c("Score","SampleID","Type")
+GSE_results$Score <- as.numeric(GSE_results$Score)
+GSE_results$Type <- factor(GSE_results$Type, levels=c("Active","Latent","Control"))
+
+
+GSE_results_TB_sweden <- GSE_results
+
+Fig1_ssGSEA_sweden  <- ssGSEA_boxplot_func(GSE_results_TB_sweden,"Type","Score","Type")
+
+Fig1_ssGSEA_sweden+
+  stat_compare_means(
+  method = "t.test",
+  comparisons = list(c("Active", "Latent"), c("Latent", "Control"),c("Active", "Control")),
+  label = "p.format",   
+  size = 5,
+  vjust = 0.5
+)
+
+Fig1_ssGSEA_sweden <- Fig1_ssGSEA_sweden+
+  stat_compare_means(
+  method = "t.test",
+  comparisons = list(c("Active", "Latent"), c("Latent", "Control"),c("Active", "Control")),
+  label = "p.signif",   
+  size = 5,
+  vjust = 0.5
+)+
+  ggtitle("Sweden")
+
+save(Fig1_ssGSEA_sweden,file="../Results/Figures/Fig1_ssGSEA_sweden.RData")
+```
+
+##### read data for identifying primary TB cases
+
+```{r}
+subanalysis_data <- read_excel("../Data/Swedish_Clinical_Table_v20241107.xlsx")
+samples_id <- gsub("\\.0","",colnames(dat_Expr))
+subanalysis <- subanalysis_data[match(samples_id,subanalysis_data$sample_id),"Subanalysis"]
+subanalysis <- subanalysis$Subanalysis
+
+active_TB_grouped <- subanalysis_data[match(samples_id,subanalysis_data$sample_id),"Active_tb_grouped"]
+active_TB_grouped <- active_TB_grouped$Active_tb_grouped
+```
+
+##### GSEA 
+
+```{r}
+GSE_results <- ssgsea(dat_Expr,modules,scale = FALSE, minsize = 12)
+GSE_results <- GSE_results["Signature",]
+
+GSE_results <- GSE_results%>%
+  rbind(colnames(dat_Expr))%>%
+  rbind(as.character(groups))%>%
+  rbind(subanalysis)%>%
+  rbind(active_TB_grouped)%>%
+  t()%>%
+  as.data.frame()
+
+names(GSE_results) <- c("Score","SampleID","Type","Subanalysis","Active_TB_groups")
+GSE_results$Score <- as.numeric(GSE_results$Score)
+
+GSE_results$color <- ifelse(is.na(GSE_results$Active_TB_groups), GSE_results$Type, GSE_results$Active_TB_groups)
+GSE_results$color <- ifelse(GSE_results$color!="Primary TB", GSE_results$Type, GSE_results$Active_TB_groups)
+GSE_results$color <- factor(GSE_results$color, levels=c("Active","Latent","Control","Primary TB"))
+GSE_results$Type <- factor(GSE_results$Type, levels=c("Active","Latent","Control"))
+GSE_results_TB_sweden <- GSE_results
+Fig_subanalysis_A  <- ssGSEA_boxplot_func_subanalysis(GSE_results,"Type","Score","Type","color")
+Fig_subanalysis_A
+```
+
+##### identifying subgroups of active TB
+
+```{r}
+clinical_data <- read_excel("../Data/ATB Olink_v20240627.xlsx",sheet = "Sheet1")
+clinical_data <- clinical_data%>%
+  select(Donor,Grp_LVL1,Grp_LVL2)
+
+
+names(clinical_data) <- c("SampleID","Grp1","Grp2")
+
+GSE_results_TB_sweden <- GSE_results_TB_sweden%>%
+  mutate(SampleID=gsub("\\.0","",SampleID))
+
+GSE_results_TB_sweden <- GSE_results_TB_sweden%>%
+  left_join(clinical_data,by = "SampleID")
+
+GSE_results_TB_sweden <- GSE_results_TB_sweden%>%
+  mutate(Grp1=ifelse(is.na(Grp1),as.character(Type),Grp1))
+
+GSE_results_TB_sweden$Grp1 <- factor(GSE_results_TB_sweden$Grp1, levels=c("PTB","EPTB","Latent","Control"))
+
+GSE_results_TB_sweden <- GSE_results_TB_sweden%>%
+  mutate(Grp2=ifelse(is.na(Grp2),as.character(Type),Grp2))
+
+GSE_results_TB_sweden$Grp2 <- factor(GSE_results_TB_sweden$Grp2, levels=c("PTB","LN","Other","Latent","Control"))
+
+suppFig1_ssGSEA_sweden_subTypes_A <- ssGSEA_boxplot_func_subanalysis(GSE_results_TB_sweden,"Grp1","Score","Type","color")+
+  ggtitle("12-marker signature")
+
+suppFig1_ssGSEA_sweden_subTypes_B <- ssGSEA_boxplot_func_subanalysis(GSE_results_TB_sweden,"Grp2","Score","Type","color")+
+  ggtitle("12-marker signature")
+
+suppFig1_ssGSEA_sweden_subTypes_A <- suppFig1_ssGSEA_sweden_subTypes_A+
+  stat_compare_means(
+  method = "t.test",
+  comparisons = list(c("PTB", "EPTB")),
+  label = "p.signif",   
+  size = 5,
+  vjust = 0.5
+)+
+  ggtitle("12-marker signature")
+
+suppFig1_ssGSEA_sweden_subTypes_B <- suppFig1_ssGSEA_sweden_subTypes_B+
+  stat_compare_means(
+  method = "t.test",
+  comparisons = list(c("PTB", "LN"), c("LN", "Other"),c("PTB", "Other")),
+  label = "p.signif",   
+  size = 5,
+  vjust = 0.5
+)+
+  ggtitle("12-marker signature")
+save(suppFig1_ssGSEA_sweden_subTypes_A,suppFig1_ssGSEA_sweden_subTypes_B,file="../Results/Figures/suppFig1_ssGSEA_sweden_subTypes.RData")
+```
+
+
+
+#### TB italy
+
+##### read data
+```{r}
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-second-italy.RData")
+dat_Expr <- t(olink)
+groups <- samples_second[match(colnames(dat_Expr),samples_second$SampleID),"modifiedType",drop=TRUE]
+```
+
+##### ssGSEA
+
+```{r}
+GSE_results <- ssgsea(dat_Expr,modules,scale = FALSE, minsize = 12)
+GSE_results <- GSE_results["Signature",]
+
+GSE_results <- GSE_results%>%
+  rbind(colnames(dat_Expr))%>%
+  rbind(as.character(groups))%>%
+  t()%>%
+  as.data.frame()
+
+names(GSE_results) <- c("Score","SampleID","Type")
+GSE_results$Score <- as.numeric(GSE_results$Score)
+GSE_results$Type <- factor(GSE_results$Type, levels=c("Active","Latent","Control"))
+
+GSE_results_TB_italy <- GSE_results
+
+Fig1_ssGSEA_italy  <- ssGSEA_boxplot_func(GSE_results_TB_italy,"Type","Score","Type")
+
+Fig1_ssGSEA_italy+
+  stat_compare_means(
+  method = "t.test",
+  comparisons = list(c("Active", "Latent"), c("Latent", "Control"),c("Active", "Control")),
+  label = "p.format",   
+  size = 5,
+  vjust = 0.5
+)
+
+Fig1_ssGSEA_italy  <- Fig1_ssGSEA_italy+
+  stat_compare_means(
+  method = "t.test",
+  comparisons = list(c("Active", "Latent"), c("Latent", "Control"),c("Active", "Control")),
+  label = "p.signif",   
+  size = 5,
+  vjust = 0.5
+)+
+  ggtitle("Italy")
+
+save(Fig1_ssGSEA_italy,file="../Results/Figures/Fig1_ssGSEA_italy.RData")
+```
+
+
+
+
+#### nonTB italy
+
+##### read data
+```{r}
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-third-heparin-nonTB.RData")
+dat_Expr_nonTB_italy <- t(olink)
+groups_nonTB_italy <- samples_third[match(colnames(dat_Expr_nonTB_italy),samples_third$SampleID),"modifiedType",drop=TRUE]
+
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-second-italy.RData")
+dat_Expr_TB_italy <- t(olink)
+groups_TB_italy <- samples_second[match(colnames(dat_Expr_TB_italy),samples_second$SampleID),"modifiedType",drop=TRUE]
+
+dat_Expr <- dat_Expr_nonTB_italy%>%
+  cbind(dat_Expr_TB_italy)
+groups <- c(groups_nonTB_italy,groups_TB_italy)
+```
+
+##### ssGSEA
+
+```{r}
+GSE_results <- ssgsea(dat_Expr,modules,scale = FALSE, minsize = 12)
+GSE_results <- GSE_results["Signature",]
+
+GSE_results <- GSE_results%>%
+  rbind(colnames(dat_Expr))%>%
+  rbind(as.character(groups))%>%
+  t()%>%
+  as.data.frame()
+
+names(GSE_results) <- c("Score","SampleID","Type")
+GSE_results$Score <- as.numeric(GSE_results$Score)
+nonTB_groups <- "nonTB"
+
+GSE_results <- GSE_results%>%
+  mutate(modifiedType = case_when(
+    str_detect(Type,"Pneumonia") ~ "nonTB",
+    str_detect(Type,"Excavated pneumonia") ~ "nonTB",
+    str_detect(Type,"MAC") ~ "nonTB",
+    str_detect(Type,"Lung adenocarcinomas") ~ "nonTB",
+    TRUE ~ Type))
+
+
+GSE_results$modifiedType <- factor(GSE_results$modifiedType, levels=c("Active","nonTB","Latent","Control"))
+
+Fig3_ssGSEA  <- ggplot(GSE_results,aes(x=modifiedType,y=Score,fill=modifiedType))+
+  geom_boxplot(outlier.shape = NA,alpha=0.6)+
+  geom_jitter(width = 0.1, size = 2, alpha = 1, aes(color=modifiedType)) + 
+  scale_color_manual(values = c("#2F8AC4", "#A3B574","#E48725", "#A5AA99"),labels = c("Active" = "TB Disease","nonTB"="ORD","Latent" = "TB Infection","Control"="IGRA- Contact"))+
+  scale_fill_manual(values = c("#2F8AC4","#A3B574", "#E48725", "#A5AA99"))+
+  labs(y=paste0("Enrichment score"),x=" ",fill=" ",color=" ")+
+  guides(fill = "none")+
+  theme(axis.text.x = element_blank(),  # Increase size of x-axis text
+    axis.text.y = element_text(size = 12),
+    axis.title.y = element_text(size=12),
+    panel.background = element_rect(fill = "white", color = NA),  
+    plot.background = element_rect(fill = "white", color = NA),  
+    panel.grid.major = element_blank(),  
+    panel.grid.minor = element_blank(),
+    panel.border = element_rect(color = "black", fill = NA)
+    )+
+  ylim(-0.5,3.5)
+
+Fig3_ssGSEA+
+  stat_compare_means(
+  method = "t.test",
+  comparisons = list(c("Active", "nonTB"), c("nonTB", "Latent"),c("nonTB", "Control")),
+  label = "p.format",   
+  size = 5,
+  vjust = 0.5
+)
+
+Fig3_ssGSEA <- Fig3_ssGSEA+
+  stat_compare_means(
+  method = "t.test",
+  comparisons = list(c("Active", "nonTB"), c("nonTB", "Latent"),c("nonTB", "Control")),
+  label = "p.signif",   
+  size = 5,
+  vjust = 0.5)+
+  ggtitle("A: 12-Marker signature")
+
+save(Fig3_ssGSEA,file="../Results/Figures/Fig3_ssGSEA.RData")
+```
+
+
+#### TB-treatment sweden
+
+##### read data
+```{r}
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-third-heparin-followTreatment.RData")
+dat_Expr <- t(olink)
+groups <- samples_third[match(colnames(dat_Expr),samples_third$SampleID),"Treatment",drop=TRUE]
+
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-third-heparin.RData")
+dat_Expr_third_heparin <- t(olink)
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-second-sweden.RData")
+dat_Expr_second_sweden <- t(olink)
+
+groups_third_heparin <- samples_third[match(colnames(dat_Expr_third_heparin),samples_third$SampleID),"modifiedType",drop=TRUE]
+groups_second_sweden <- samples_second[match(colnames(dat_Expr_second_sweden),samples_second$SampleID),"modifiedType",drop=TRUE]
+
+dat_Expr_sweden <- dat_Expr_third_heparin%>%
+  cbind(dat_Expr_second_sweden)
+groups_sweden <- c(groups_third_heparin,groups_second_sweden)
+
+dat_Expr <- dat_Expr%>%
+  cbind(dat_Expr_sweden)
+groups <- c(groups,groups_sweden)
+```
+
+##### ssGSEA
+
+```{r}
+GSE_results <- ssgsea(dat_Expr,modules,scale = TRUE, minsize = 12)
+GSE_results <- GSE_results["Signature",]
+
+GSE_results <- GSE_results%>%
+  rbind(colnames(dat_Expr))%>%
+  rbind(as.character(groups))%>%
+  t()%>%
+  as.data.frame()
+
+names(GSE_results) <- c("Score","SampleID","Type")
+GSE_results <- GSE_results%>%
+  filter(Type!="Active")
+GSE_results$Score <- as.numeric(GSE_results$Score)
+GSE_results$Type <- factor(GSE_results$Type, levels=c("Baseline","2 Months","6 Months","Latent","Control"))
+
+GSE_results <- GSE_results%>%
+  mutate(modifiedType = case_when(
+    str_detect(Type,"Baseline") ~ "Active",
+    str_detect(Type,"2 Months") ~ "Active",
+    str_detect(Type,"6 Months") ~ "Active",
+    TRUE ~ Type))
+
+GSE_results$modifiedType <- factor(GSE_results$modifiedType, levels=c("Active","Latent","Control"))
+
+Fig4_ssGSEA  <- ssGSEA_boxplot_func(GSE_results,"Type","Score","modifiedType")
+
+Fig4_ssGSEA+
+  stat_compare_means(
+  method = "t.test",
+  comparisons = list(c("Baseline", "2 Months"), c("Baseline", "6 Months"),c("2 Months", "6 Months")),
+  label = "p.format",   
+  size = 5,
+  vjust = 0.5
+)
+
+Fig4_ssGSEA <- Fig4_ssGSEA+
+  stat_compare_means(
+  method = "t.test",
+  comparisons = list(c("Baseline", "2 Months"), c("Baseline", "6 Months"),c("2 Months", "6 Months")),
+  label = "p.signif",   
+  size = 5,
+  vjust = 0.5)+
+  ggtitle("12-Marker signature")
+
+save(Fig4_ssGSEA,file="../Results/Figures/Fig4_ssGSEA.RData")
+```
+
+#### TB-treatment sweden (scatterplot with paired samples are connected by lines)
+
+##### read data
+```{r}
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-third-heparin-followTreatment.RData")
+dat_Expr <- t(olink)
+groups <- samples_third[match(colnames(dat_Expr),samples_third$SampleID),"Treatment",drop=TRUE]
+```
+
+##### ssGSEA
+
+```{r}
+GSE_results <- ssgsea(dat_Expr,modules,scale = TRUE, minsize = 12)
+GSE_results <- GSE_results["Signature",]
+
+studyID <- samples_third[match(colnames(dat_Expr),samples_third$SampleID),"Study ID",drop=TRUE]
+studyID <- unlist(lapply(studyID,function(x) strsplit(x,":")[[1]][1]))
+
+GSE_results <- GSE_results%>%
+  rbind(colnames(dat_Expr))%>%
+  rbind(as.character(groups))%>%
+  rbind(as.character(studyID))%>%
+  t()%>%
+  as.data.frame()
+
+names(GSE_results) <- c("Score","SampleID","Type","StudyID")
+GSE_results$Score <- as.numeric(GSE_results$Score)
+GSE_results$Type <- factor(GSE_results$Type, levels=c("Baseline","2 Months","6 Months"))
+
+mean_scores <- GSE_results%>%
+  group_by(Type)%>%
+  summarise(mean_score=mean(Score))
+
+
+Fig4_scatterplot <- ggplot(GSE_results,aes(x=Type,y=Score,group = StudyID))+
+  geom_point(aes(color = Type)) +
+  geom_line(colour = "grey") +
+  scale_color_manual(values = c("#2F8AC4","#2F8AC4", "#2F8AC4"))+
+  stat_summary(fun.y=mean, colour="black", geom="line",linetype="dashed",aes(group=1))+
+  labs(y=paste0("Enrichment score"),x=" ",colour=" ")+
+  guides(colour=FALSE)+
+  theme(axis.text.x = element_text(size = 12),  # Increase size of x-axis text
+    axis.text.y = element_text(size = 12),
+    axis.title.y = element_text(size=12),
+    panel.background = element_rect(fill = "white", color = NA),  
+    plot.background = element_rect(fill = "white", color = NA),  
+    panel.grid.major = element_blank(),  
+    panel.grid.minor = element_blank(),
+    panel.border = element_rect(color = "black", fill = NA))
+
+pdf(file="../Results/Figures/Fig4_scatterplot-12 marker.pdf")
+ggplot(GSE_results, aes(x = Type, y = Score, group = StudyID)) +
+  geom_point(aes(color = Type)) +
+  geom_line(colour = "grey") +
+  geom_text(aes(label = SampleID), vjust = 0, size = 3) +  # Add text labels
+  scale_color_manual(values = c("#2F8AC4", "#2F8AC4", "#2F8AC4")) +
+  stat_summary(fun = mean, colour = "black", geom = "line", linetype = "dashed", aes(group = 1)) +
+  labs(y = paste0("Enrichment score"), x = " ", colour = " ") +
+  guides(colour = FALSE) +
+  theme(
+    axis.text.x = element_text(size = 12),
+    axis.text.y = element_text(size = 12),
+    axis.title.y = element_text(size = 12),
+    panel.background = element_rect(fill = "white", color = NA),
+    plot.background = element_rect(fill = "white", color = NA),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_rect(color = "black", fill = NA)
+  )
+dev.off()
+Fig4_scatterplot
+save(Fig4_scatterplot,file="../Results/Figures/Fig4_scatterplot.RData")
+```
+
+
+
+
+#### TB-EDTA both
+
+##### read data
+
+```{r}
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-third-edta.RData")
+dat_Expr_EDTA_sweden <- t(olink)
+groups_EDTA_sweden <- samples_third[match(colnames(dat_Expr_EDTA_sweden),samples_third$SampleID),"modifiedType",drop=TRUE]
+
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-portugal.RData")
+dat_Expr_EDTA_portugal <- t(olink)
+groups <- samples_first[match(colnames(dat_Expr_EDTA_portugal),samples_first$SampleID),"modifiedType",drop=TRUE]
+groups_EDTA_portugal <- gsub("Latent","Control",groups)
+
+dat_Expr <- dat_Expr_EDTA_sweden%>%
+  cbind(dat_Expr_EDTA_portugal)
+groups <- c(groups_EDTA_sweden,groups_EDTA_portugal)
+```
+
+##### ssGSEA
+
+```{r}
+GSE_results <- ssgsea(dat_Expr,modules,scale = FALSE, minsize = 12)
+GSE_results <- GSE_results["Signature",]
+
+GSE_results <- GSE_results%>%
+  rbind(colnames(dat_Expr))%>%
+  rbind(as.character(groups))%>%
+  t()%>%
+  as.data.frame()
+
+names(GSE_results) <- c("Score","SampleID","Type")
+GSE_results$Score <- as.numeric(GSE_results$Score)
+GSE_results$Type <- factor(GSE_results$Type, levels=c("Active","Latent","Control"))
+
+
+Fig5_ssGSEA_both  <- ssGSEA_boxplot_func(GSE_results,"Type","Score","Type")
+
+Fig5_ssGSEA_both+
+  stat_compare_means(
+  method = "t.test",
+  comparisons = list(c("Active", "Latent"), c("Latent", "Control"),c("Active", "Control")),
+  label = "p.format",   
+  size = 5,
+  vjust = 0.5
+)
+
+Fig5_ssGSEA_both  <- Fig5_ssGSEA_both+
+  stat_compare_means(
+  method = "t.test",
+  comparisons = list(c("Active", "Latent"), c("Latent", "Control"),c("Active", "Control")),
+  label = "p.signif",   
+  size = 5,
+  vjust = 0.5
+)+
+  ggtitle("A: 12-marker signature")
+
+save(Fig5_ssGSEA_both,file="../Results/Figures/Fig5_ssGSEA_both.RData")
+```
+
+#### TB-EDTA sweden
+
+##### read data
+
+```{r}
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-third-edta.RData")
+dat_Expr <- t(olink)
+groups <- samples_third[match(colnames(dat_Expr),samples_third$SampleID),"modifiedType",drop=TRUE]
+```
+
+##### ssGSEA
+
+```{r}
+GSE_results <- ssgsea(dat_Expr,modules,scale = FALSE, minsize = 12)
+GSE_results <- GSE_results["Signature",]
+
+GSE_results <- GSE_results%>%
+  rbind(colnames(dat_Expr))%>%
+  rbind(as.character(groups))%>%
+  t()%>%
+  as.data.frame()
+
+names(GSE_results) <- c("Score","SampleID","Type")
+GSE_results$Score <- as.numeric(GSE_results$Score)
+GSE_results$Type <- factor(GSE_results$Type, levels=c("Active","Latent"))
+
+GSE_results_edta <- GSE_results
+
+Fig5_ssGSEA_sweden  <- ssGSEA_boxplot_func(GSE_results_edta,"Type","Score","Type")
+
+Fig5_ssGSEA_sweden+
+  stat_compare_means(
+  method = "t.test",
+  comparisons = list(c("Active", "Latent")),
+  label = "p.format",   
+  size = 5,
+  vjust = 0.5
+)
+
+Fig5_ssGSEA_sweden  <- Fig5_ssGSEA_sweden+
+  stat_compare_means(
+  method = "t.test",
+  comparisons = list(c("Active", "Latent")),
+  label = "p.signif",   
+  size = 5,
+  vjust = 0.5
+)+
+  ggtitle("12-marker signature")
+
+save(Fig5_ssGSEA_sweden,file="../Results/Figures/Fig5_ssGSEA_sweden.RData")
+```
+
+#### TB-EDTA portugal
+
+##### read data
+```{r}
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-portugal.RData")
+dat_Expr <- t(olink)
+groups <- samples_first[match(colnames(dat_Expr),samples_first$SampleID),"modifiedType",drop=TRUE]
+groups <- gsub("Latent","Control",groups)
+```
+
+##### ssGSEA
+
+```{r}
+GSE_results <- ssgsea(dat_Expr,modules,scale = FALSE, minsize = 12)
+GSE_results <- GSE_results["Signature",]
+
+GSE_results <- GSE_results%>%
+  rbind(colnames(dat_Expr))%>%
+  rbind(as.character(groups))%>%
+  t()%>%
+  as.data.frame()
+
+names(GSE_results) <- c("Score","SampleID","Type")
+GSE_results$Score <- as.numeric(GSE_results$Score)
+GSE_results$Type <- factor(GSE_results$Type, levels=c("Active","Latent","Control"))
+
+GSE_results_TB_Portugal <- GSE_results
+
+Fig5_ssGSEA_portugal <- ssGSEA_boxplot_func_portugal(GSE_results_TB_Portugal,"Type","Score","Type")
+
+Fig5_ssGSEA_portugal+
+  stat_compare_means(
+  method = "t.test",
+  comparisons = list(c("Active", "Control")),
+  label = "p.format",   
+  size = 5,
+  vjust = 0.5
+)
+
+Fig5_ssGSEA_portugal  <- Fig5_ssGSEA_portugal+
+  stat_compare_means(
+  method = "t.test",
+  comparisons = list(c("Active", "Control")),
+  label = "p.signif",   
+  size = 5,
+  vjust = 0.5
+)
+
+save(Fig5_ssGSEA_portugal,file="../Results/Figures/Fig5_ssGSEA_portugal.RData")
+```
+
+
+#### nonTB Sarcoidosis {.tabset}
+
+##### timecat 1
+###### read data
+```{r}
+l=load("../Data/ReadyData-Sarcoidosis-AllSamples.RData")
+dat_Expr <- t(datExpr_1)
+groups <- datTraits_1$casecontrol
+```
+
+###### ssGSEA
+
+```{r}
+GSE_results <- ssgsea(dat_Expr,modules,scale = FALSE, minsize = 12)
+GSE_results <- GSE_results["Signature",]
+
+GSE_results <- GSE_results%>%
+  rbind(colnames(dat_Expr))%>%
+  rbind(as.character(groups))%>%
+  t()%>%
+  as.data.frame()
+
+names(GSE_results) <- c("Score","SampleID","Type")
+GSE_results$Score <- as.numeric(GSE_results$Score)
+
+
+GSE_results <- GSE_results%>%
+  mutate(modifiedType = case_when(
+    str_detect(Type,"1") ~ "Sarcoidosis",
+    str_detect(Type,"0") ~ "Control"))
+
+
+GSE_results$modifiedType <- factor(GSE_results$modifiedType, levels=c("Sarcoidosis","Control"))
+
+Fig7_ssGSEA_A_1  <- ggplot(GSE_results,aes(x=modifiedType,y=Score,fill=modifiedType))+
+  geom_boxplot(outlier.shape = NA)+
+  geom_jitter(width = 0.1, size = 2, alpha = 0.6, aes(color=modifiedType)) + 
+  scale_color_manual(values = c("#A3B574","#A5AA99"))+
+  scale_fill_manual(values = c("#A3B574", "#A5AA99"))+
+  labs(y=paste0("Enrichment score"),x=" ",fill=" ")+
+  guides(color = "none")+
+  theme(axis.text.x = element_text(size = 12),  # Increase size of x-axis text
+    axis.text.y = element_text(size = 12),
+    axis.title.y = element_text(size=12),
+    panel.background = element_rect(fill = "white", color = NA),  
+    plot.background = element_rect(fill = "white", color = NA),  
+    panel.grid.major = element_blank(),  
+    panel.grid.minor = element_blank(),
+    panel.border = element_rect(color = "black", fill = NA)
+    )+
+  ylim(-0.5,3.5)
+
+Fig7_ssGSEA_A_1+
+  stat_compare_means(
+  method = "t.test",
+  comparisons = list(c("Sarcoidosis", "Control")),
+  label = "p.format",   
+  size = 5,
+  vjust = 0.5
+)
+
+Fig7_ssGSEA_A_1 <- Fig7_ssGSEA_A_1+
+  stat_compare_means(
+  method = "t.test",
+  comparisons = list(c("Sarcoidosis", "Control")),
+  label = "p.signif",   
+  size = 5,
+  vjust = 0.5)+
+  ggtitle("12-Marker signature")
+```
+
+##### timecat 2
+###### read data
+```{r}
+l=load("../Data/ReadyData-Sarcoidosis-AllSamples.RData")
+dat_Expr <- t(datExpr_2)
+groups <- datTraits_2$casecontrol
+```
+
+###### ssGSEA
+
+```{r}
+GSE_results <- ssgsea(dat_Expr,modules,scale = FALSE, minsize = 12)
+GSE_results <- GSE_results["Signature",]
+
+GSE_results <- GSE_results%>%
+  rbind(colnames(dat_Expr))%>%
+  rbind(as.character(groups))%>%
+  t()%>%
+  as.data.frame()
+
+names(GSE_results) <- c("Score","SampleID","Type")
+GSE_results$Score <- as.numeric(GSE_results$Score)
+
+
+GSE_results <- GSE_results%>%
+  mutate(modifiedType = case_when(
+    str_detect(Type,"1") ~ "Sarcoidosis",
+    str_detect(Type,"0") ~ "Control"))
+
+
+GSE_results$modifiedType <- factor(GSE_results$modifiedType, levels=c("Sarcoidosis","Control"))
+
+Fig7_ssGSEA_A_2  <- ggplot(GSE_results,aes(x=modifiedType,y=Score,fill=modifiedType))+
+  geom_boxplot(outlier.shape = NA)+
+  geom_jitter(width = 0.1, size = 2, alpha = 0.6, aes(color=modifiedType)) + 
+  scale_color_manual(values = c("#A3B574","#A5AA99"))+
+  scale_fill_manual(values = c("#A3B574", "#A5AA99"))+
+  labs(y=paste0("Enrichment score"),x=" ",fill=" ")+
+  guides(color = "none")+
+  theme(axis.text.x = element_text(size = 12),  # Increase size of x-axis text
+    axis.text.y = element_text(size = 12),
+    axis.title.y = element_text(size=12),
+    panel.background = element_rect(fill = "white", color = NA),  
+    plot.background = element_rect(fill = "white", color = NA),  
+    panel.grid.major = element_blank(),  
+    panel.grid.minor = element_blank(),
+    panel.border = element_rect(color = "black", fill = NA)
+    )+
+  ylim(-0.5,3.5)
+
+Fig7_ssGSEA_A_2+
+  stat_compare_means(
+  method = "t.test",
+  comparisons = list(c("Sarcoidosis", "Control")),
+  label = "p.format",   
+  size = 5,
+  vjust = 0.5
+)
+
+Fig7_ssGSEA_A_2 <- Fig7_ssGSEA_A_2+
+  stat_compare_means(
+  method = "t.test",
+  comparisons = list(c("Sarcoidosis", "Control")),
+  label = "p.signif",   
+  size = 5,
+  vjust = 0.5)+
+  ggtitle("12-Marker signature")
+```
+
+##### timecat 3
+###### read data
+```{r}
+l=load("../Data/ReadyData-Sarcoidosis-AllSamples.RData")
+dat_Expr <- t(datExpr_3)
+groups <- datTraits_3$casecontrol
+```
+
+###### ssGSEA
+
+```{r}
+GSE_results <- ssgsea(dat_Expr,modules,scale = FALSE, minsize = 12)
+GSE_results <- GSE_results["Signature",]
+
+GSE_results <- GSE_results%>%
+  rbind(colnames(dat_Expr))%>%
+  rbind(as.character(groups))%>%
+  t()%>%
+  as.data.frame()
+
+names(GSE_results) <- c("Score","SampleID","Type")
+GSE_results$Score <- as.numeric(GSE_results$Score)
+
+
+GSE_results <- GSE_results%>%
+  mutate(modifiedType = case_when(
+    str_detect(Type,"1") ~ "Sarcoidosis",
+    str_detect(Type,"0") ~ "Control"))
+
+
+GSE_results$modifiedType <- factor(GSE_results$modifiedType, levels=c("Sarcoidosis","Control"))
+
+Fig7_ssGSEA_A_3 <- ggplot(GSE_results,aes(x=modifiedType,y=Score,fill=modifiedType))+
+  geom_boxplot(outlier.shape = NA)+
+  geom_jitter(width = 0.1, size = 2, alpha = 0.6, aes(color=modifiedType)) + 
+  scale_color_manual(values = c("#A3B574","#A5AA99"))+
+  scale_fill_manual(values = c("#A3B574", "#A5AA99"))+
+  labs(y=paste0("Enrichment score"),x=" ",fill=" ")+
+  guides(color = "none")+
+  theme(axis.text.x = element_text(size = 12),  # Increase size of x-axis text
+    axis.text.y = element_text(size = 12),
+    axis.title.y = element_text(size=12),
+    panel.background = element_rect(fill = "white", color = NA),  
+    plot.background = element_rect(fill = "white", color = NA),  
+    panel.grid.major = element_blank(),  
+    panel.grid.minor = element_blank(),
+    panel.border = element_rect(color = "black", fill = NA)
+    )+
+  ylim(-0.5,3.5)
+
+Fig7_ssGSEA_A_3+
+  stat_compare_means(
+  method = "t.test",
+  comparisons = list(c("Sarcoidosis", "Control")),
+  label = "p.format",   
+  size = 5,
+  vjust = 0.5
+)
+
+Fig7_ssGSEA_A_3 <- Fig7_ssGSEA_A_3+
+  stat_compare_means(
+  method = "t.test",
+  comparisons = list(c("Sarcoidosis", "Control")),
+  label = "p.signif",   
+  size = 5,
+  vjust = 0.5)+
+  ggtitle("12-Marker signature")
+```
+
+##### timecat 4
+###### read data
+```{r}
+l=load("../Data/ReadyData-Sarcoidosis-AllSamples.RData")
+dat_Expr <- t(datExpr_4)
+groups <- datTraits_4$casecontrol
+```
+
+###### ssGSEA
+
+```{r}
+GSE_results <- ssgsea(dat_Expr,modules,scale = FALSE, minsize = 12)
+GSE_results <- GSE_results["Signature",]
+
+GSE_results <- GSE_results%>%
+  rbind(colnames(dat_Expr))%>%
+  rbind(as.character(groups))%>%
+  t()%>%
+  as.data.frame()
+
+names(GSE_results) <- c("Score","SampleID","Type")
+GSE_results$Score <- as.numeric(GSE_results$Score)
+
+
+GSE_results <- GSE_results%>%
+  mutate(modifiedType = case_when(
+    str_detect(Type,"1") ~ "Sarcoidosis",
+    str_detect(Type,"0") ~ "Control"))
+
+
+GSE_results$modifiedType <- factor(GSE_results$modifiedType, levels=c("Sarcoidosis","Control"))
+
+Fig7_ssGSEA_A_4 <- ggplot(GSE_results,aes(x=modifiedType,y=Score,fill=modifiedType))+
+  geom_boxplot(outlier.shape = NA)+
+  geom_jitter(width = 0.1, size = 2, alpha = 0.6, aes(color=modifiedType)) + 
+  scale_color_manual(values = c("#A3B574","#A5AA99"))+
+  scale_fill_manual(values = c("#A3B574", "#A5AA99"))+
+  labs(y=paste0("Enrichment score"),x=" ",fill=" ")+
+  guides(color = "none")+
+  theme(axis.text.x = element_text(size = 12),  # Increase size of x-axis text
+    axis.text.y = element_text(size = 12),
+    axis.title.y = element_text(size=12),
+    panel.background = element_rect(fill = "white", color = NA),  
+    plot.background = element_rect(fill = "white", color = NA),  
+    panel.grid.major = element_blank(),  
+    panel.grid.minor = element_blank(),
+    panel.border = element_rect(color = "black", fill = NA)
+    )+
+  ylim(-0.5,3.5)
+
+Fig7_ssGSEA_A_4+
+  stat_compare_means(
+  method = "t.test",
+  comparisons = list(c("Sarcoidosis", "Control")),
+  label = "p.format",   
+  size = 5,
+  vjust = 0.5
+)
+
+Fig7_ssGSEA_A_4 <- Fig7_ssGSEA_A_4+
+  stat_compare_means(
+  method = "t.test",
+  comparisons = list(c("Sarcoidosis", "Control")),
+  label = "p.signif",   
+  size = 5,
+  vjust = 0.5)+
+  ggtitle("12-Marker signature")
+```
+
+#### nonTB Covid
+
+##### read data
+```{r}
+modules[[4]]=c("IFNG","CXCL9","VEGFA","CDCP1","CCL19","CCL7","CD40","IL7","MMP1","CD274","IL12B")
+load("../Data/ReadyData-Covid.RData")
+dat_Expr <- covid_NPXdata_wide
+groups <- covid_clinicalData$COVID
+
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-third-heparin-nonTB.RData")
+dat_Expr_nonTB_italy <- t(olink)
+row.names(dat_Expr_nonTB_italy) <- gsub("-","",row.names(dat_Expr_nonTB_italy))
+intersect(row.names(dat_Expr_nonTB_italy),row.names(dat_Expr))
+
+dat_Expr[grep("IL6",row.names(dat_Expr)),]
+```
+
+##### ssGSEA
+
+```{r}
+GSE_results <- ssgsea(dat_Expr,modules,scale = FALSE, minsize = 11)
+GSE_results <- GSE_results["Signature",]
+
+GSE_results <- GSE_results%>%
+  rbind(colnames(dat_Expr))%>%
+  rbind(as.character(groups))%>%
+  t()%>%
+  as.data.frame()
+
+names(GSE_results) <- c("Score","SampleID","Type")
+GSE_results$Score <- as.numeric(GSE_results$Score)
+
+
+GSE_results <- GSE_results%>%
+  mutate(modifiedType = case_when(
+    str_detect(Type,"1") ~ "Covid",
+    str_detect(Type,"0") ~ "Control"))
+
+
+GSE_results$modifiedType <- factor(GSE_results$modifiedType, levels=c("Covid","Control"))
+
+Fig6_ssGSEA_A  <- ggplot(GSE_results,aes(x=modifiedType,y=Score,fill=modifiedType))+
+  geom_boxplot(outlier.shape = NA)+
+  geom_jitter(width = 0.1, size = 2, alpha = 0.6, aes(color=modifiedType)) + 
+  scale_color_manual(values = c("#A3B574","#A5AA99"))+
+  scale_fill_manual(values = c("#A3B574", "#A5AA99"))+
+  labs(y=paste0("Enrichment score"),x=" ",fill=" ")+
+  guides(color = "none")+
+  theme(axis.text.x = element_text(size = 12),  # Increase size of x-axis text
+    axis.text.y = element_text(size = 12),
+    axis.title.y = element_text(size=12),
+    panel.background = element_rect(fill = "white", color = NA),  
+    plot.background = element_rect(fill = "white", color = NA),  
+    panel.grid.major = element_blank(),  
+    panel.grid.minor = element_blank(),
+    panel.border = element_rect(color = "black", fill = NA)
+    )+
+  ylim(-0.5,3.5)
+
+Fig6_ssGSEA_A+
+  stat_compare_means(
+  method = "t.test",
+  comparisons = list(c("Covid", "Control")),
+  label = "p.format",   
+  size = 5,
+  vjust = 0.5
+)
+
+Fig6_ssGSEA_A <- Fig6_ssGSEA_A+
+  stat_compare_means(
+  method = "t.test",
+  comparisons = list(c("Covid", "Control")),
+  label = "p.signif",   
+  size = 5,
+  vjust = 0.5)+
+  ggtitle("11-Marker signature")
+```
+
+
+
+### save GSEA results 
+```{r}
+save(GSE_results_TB_sweden, GSE_results_edta,file="../Results/GSEA/12-marker.RData")
+```
+
+
+## 7-marker
+
+### load signature
+
+```{r}
+load(file="../Data/ReadyData-withoutFilteringProteins/generated for iScience/0.3-pearson-modules.RData")
+modules[[4]]=c("IL6","CDCP1","IFN-gamma","CXCL9","VEGFA","MCP-3","CCL19")
+names(modules)=c("1","2","3","Signature","5")
+```
+
+### which data {.tabset}
+
+#### TB discovery sweden
+
+##### read data
+
+```{r}
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-discovery.RData")
+dat_Expr <- t(olink)
+groups <- samples_first[match(colnames(dat_Expr),samples_first$SampleID),"modifiedType",drop=TRUE]
+```
+
+##### ssGSEA
+
+```{r}
+GSE_results <- ssgsea(dat_Expr,modules,scale = FALSE, minsize = 7)
+GSE_results <- GSE_results["Signature",]
+
+GSE_results <- GSE_results%>%
+  rbind(colnames(dat_Expr))%>%
+  rbind(as.character(groups))%>%
+  t()%>%
+  as.data.frame()
+
+names(GSE_results) <- c("Score","SampleID","Type")
+GSE_results$Score <- as.numeric(GSE_results$Score)
+GSE_results$Type <- factor(GSE_results$Type, levels=c("Active","Latent","Control"))
+
+Fig2_ssGSEA_discovery_A <- ssGSEA_boxplot_func(GSE_results,"Type","Score","Type")
+
+Fig2_ssGSEA_discovery_A+
+  stat_compare_means(
+  method = "t.test",
+  comparisons = list(c("Active", "Latent"), c("Latent", "Control"),c("Active", "Control")),
+  label = "p.format",   
+  size = 5,
+  vjust = 0.5
+)
+
+Fig2_ssGSEA_discovery_A  <- Fig2_ssGSEA_discovery_A+
+  stat_compare_means(
+  method = "t.test",
+  comparisons = list(c("Active", "Latent"), c("Latent", "Control"),c("Active", "Control")),
+  label = "p.signif",   
+  size = 5,
+  vjust = 0.5
+)+
+  ggtitle("Discovery")
+
+save(Fig2_ssGSEA_discovery_A,file="../Results/Figures/Fig2_ssGSEA_discovery_A.RData")
+```
+
+
+#### TB both
+
+##### read data
+
+```{r}
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-third-heparin.RData")
+dat_Expr_third_heparin <- t(olink)
+# dat_Expr_third_heparin <- dat_Expr_third_heparin[,!colnames(dat_Expr_third_heparin)%in%c("TB0166.0","TB0102","TB0161")]
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-second-sweden.RData")
+dat_Expr_second_sweden <- t(olink)
+# dat_Expr_second_sweden <- dat_Expr_second_sweden[,!colnames(dat_Expr_second_sweden)%in%c("TB0061")]
+
+groups_third_heparin <- samples_third[match(colnames(dat_Expr_third_heparin),samples_third$SampleID),"modifiedType",drop=TRUE]
+groups_second_sweden <- samples_second[match(colnames(dat_Expr_second_sweden),samples_second$SampleID),"modifiedType",drop=TRUE]
+
+dat_Expr_sweden <- dat_Expr_third_heparin%>%
+  cbind(dat_Expr_second_sweden)
+groups_sweden <- c(groups_third_heparin,groups_second_sweden)
+
+l=load("../Data/ReadyData-withoutFilteringProteins/ReadyData-second-italy.RData")
+dat_Expr_italy <- t(olink)
+groups_italy <- samples_second[match(colnames(dat_Expr_italy),samples_second$SampleID),"modifiedType",drop=TRUE]
+
+dat_Expr <- dat_Expr_sweden%>%
+  cbind(dat_Expr_italy)
+groups <- c(groups_sweden,groups_italy)
+```
+
+##### ssGSEA
+
+```{r}
+GSE_results <- ssgsea(dat_Expr,modules,scale = FALSE, minsize = 7)
+GSE_results <- GSE_results["Signature",]
+
+GSE_results <- GSE_results%>%
+  rbind(colnames(dat_Expr))%>%
+  rbind(as.character(groups))%>%
+  t()%>%
+  as.data.frame()
+
+names(GSE_results) <- c("Score","SampleID","Type")
+GSE_results$Score <- as.numeric(GSE_results$Score)
+GSE_results$Type <- factor(GSE_results$Type, levels=c("Active","Latent","Control"))
+
+Fig2_ssGSEA_both_A <- ssGSEA_boxplot_func(GSE_results,"Type","Score","Type")
+
+Fig2_ssGSEA_both_A+
+  stat_compare_means(
+  method = "t.test",
+  comparisons = list(c("Active", "Latent"), c("Latent", "Control"),c("Active", "Control")),
+  label = "p.format",   
+  size = 5,
+  vjust = 0.5
+)
+
+Fig2_ssGSEA_both_A  <- Fig2_ssGSEA_both_A+
+  stat_compare_means(
+  method = "t.test",
+  comparisons = list(c("Active", "Latent"), c("Latent", "Control"),c("Active", "Control")),
+  label = "p.signif",   
+  size = 5,
+  vjust = 0.5
+)+
+  ggtitle("Discovery")
+
+save(Fig2_ssGSEA_both_A,file="../Results/Figures/Fig2_ssGSEA_both_A.RData")
+```
+
+
+#### TB sweden
+
+##### read data
+
+```{r}
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-third-heparin.RData")
+dat_Expr_third_heparin <- t(olink)
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-second-sweden.RData")
+dat_Expr_second_sweden <- t(olink)
+
+groups_third_heparin <- samples_third[match(colnames(dat_Expr_third_heparin),samples_third$SampleID),"modifiedType",drop=TRUE]
+groups_second_sweden <- samples_second[match(colnames(dat_Expr_second_sweden),samples_second$SampleID),"modifiedType",drop=TRUE]
+
+dat_Expr <- dat_Expr_third_heparin%>%
+  cbind(dat_Expr_second_sweden)
+groups <- c(groups_third_heparin,groups_second_sweden)
+```
+
+##### ssGSEA
+
+```{r}
+GSE_results <- ssgsea(dat_Expr,modules,scale = FALSE, minsize = 7)
+GSE_results <- GSE_results["Signature",]
+
+GSE_results <- GSE_results%>%
+  rbind(colnames(dat_Expr))%>%
+  rbind(as.character(groups))%>%
+  t()%>%
+  as.data.frame()
+
+names(GSE_results) <- c("Score","SampleID","Type")
+GSE_results$Score <- as.numeric(GSE_results$Score)
+GSE_results$Type <- factor(GSE_results$Type, levels=c("Active","Latent","Control"))
+
+
+GSE_results_TB_sweden <- GSE_results
+
+Fig2_ssGSEA_sweden_A  <- ssGSEA_boxplot_func(GSE_results_TB_sweden,"Type","Score","Type")
+
+Fig2_ssGSEA_sweden_A+
+  stat_compare_means(
+  method = "t.test",
+  comparisons = list(c("Active", "Latent"), c("Latent", "Control"),c("Active", "Control")),
+  label = "p.format",   
+  size = 5,
+  vjust = 0.5
+)
+
+Fig2_ssGSEA_sweden_A <- Fig2_ssGSEA_sweden_A+
+  stat_compare_means(
+  method = "t.test",
+  comparisons = list(c("Active", "Latent"), c("Latent", "Control"),c("Active", "Control")),
+  label = "p.signif",   
+  size = 5,
+  vjust = 0.5
+)+
+  ggtitle("Sweden")
+
+save(Fig2_ssGSEA_sweden_A,file="../Results/Figures/Fig2_ssGSEA_sweden_A.RData")
+```
+
+#### TB italy
+
+##### read data
+```{r}
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-second-italy.RData")
+dat_Expr <- t(olink)
+groups <- samples_second[match(colnames(dat_Expr),samples_second$SampleID),"modifiedType",drop=TRUE]
+```
+
+##### ssGSEA
+
+```{r}
+GSE_results <- ssgsea(dat_Expr,modules,scale = FALSE, minsize = 7)
+GSE_results <- GSE_results["Signature",]
+
+GSE_results <- GSE_results%>%
+  rbind(colnames(dat_Expr))%>%
+  rbind(as.character(groups))%>%
+  t()%>%
+  as.data.frame()
+
+names(GSE_results) <- c("Score","SampleID","Type")
+GSE_results$Score <- as.numeric(GSE_results$Score)
+GSE_results$Type <- factor(GSE_results$Type, levels=c("Active","Latent","Control"))
+
+GSE_results_TB_italy <- GSE_results
+
+Fig2_ssGSEA_italy_A  <- ssGSEA_boxplot_func(GSE_results_TB_italy,"Type","Score","Type")
+
+Fig2_ssGSEA_italy_A+
+  stat_compare_means(
+  method = "t.test",
+  comparisons = list(c("Active", "Latent"), c("Latent", "Control"),c("Active", "Control")),
+  label = "p.format",   
+  size = 5,
+  vjust = 0.5
+)
+
+Fig2_ssGSEA_italy_A  <- Fig2_ssGSEA_italy_A+
+  stat_compare_means(
+  method = "t.test",
+  comparisons = list(c("Active", "Latent"), c("Latent", "Control"),c("Active", "Control")),
+  label = "p.signif",   
+  size = 5,
+  vjust = 0.5
+)+
+  ggtitle("Italy")
+
+save(Fig2_ssGSEA_italy_A,file="../Results/Figures/Fig2_ssGSEA_italy_A.RData")
+```
+
+
+
+
+## 6-marker
+
+### load signature
+
+```{r}
+load(file="../Data/ReadyData-withoutFilteringProteins/generated for iScience/0.3-pearson-modules.RData")
+modules[[4]]=c("IL6","CDCP1","IFN-gamma","CXCL9","VEGFA","MCP-3")
+names(modules)=c("1","2","3","Signature","5")
+```
+
+### which data {.tabset}
+
+#### TB discovery sweden
+
+##### read data
+
+```{r}
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-discovery.RData")
+dat_Expr <- t(olink)
+groups <- samples_first[match(colnames(dat_Expr),samples_first$SampleID),"modifiedType",drop=TRUE]
+```
+
+##### ssGSEA
+
+```{r}
+GSE_results <- ssgsea(dat_Expr,modules,scale = FALSE, minsize = 6)
+GSE_results <- GSE_results["Signature",]
+
+GSE_results <- GSE_results%>%
+  rbind(colnames(dat_Expr))%>%
+  rbind(as.character(groups))%>%
+  t()%>%
+  as.data.frame()
+
+names(GSE_results) <- c("Score","SampleID","Type")
+GSE_results$Score <- as.numeric(GSE_results$Score)
+GSE_results$Type <- factor(GSE_results$Type, levels=c("Active","Latent","Control"))
+
+Fig2_ssGSEA_discovery_B <- ssGSEA_boxplot_func(GSE_results,"Type","Score","Type")
+
+Fig2_ssGSEA_discovery_B+
+  stat_compare_means(
+  method = "t.test",
+  comparisons = list(c("Active", "Latent"), c("Latent", "Control"),c("Active", "Control")),
+  label = "p.format",   
+  size = 5,
+  vjust = 0.5
+)
+
+Fig2_ssGSEA_discovery_B  <- Fig2_ssGSEA_discovery_B+
+  stat_compare_means(
+  method = "t.test",
+  comparisons = list(c("Active", "Latent"), c("Latent", "Control"),c("Active", "Control")),
+  label = "p.signif",   
+  size = 5,
+  vjust = 0.5
+)+
+  ggtitle("Discovery")
+
+save(Fig2_ssGSEA_discovery_B,file="../Results/Figures/Fig2_ssGSEA_discovery_B.RData")
+```
+
+
+#### TB both
+
+##### read data
+
+```{r}
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-third-heparin.RData")
+dat_Expr_third_heparin <- t(olink)
+# dat_Expr_third_heparin <- dat_Expr_third_heparin[,!colnames(dat_Expr_third_heparin)%in%c("TB0166.0","TB0102","TB0161")]
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-second-sweden.RData")
+dat_Expr_second_sweden <- t(olink)
+# dat_Expr_second_sweden <- dat_Expr_second_sweden[,!colnames(dat_Expr_second_sweden)%in%c("TB0061")]
+
+groups_third_heparin <- samples_third[match(colnames(dat_Expr_third_heparin),samples_third$SampleID),"modifiedType",drop=TRUE]
+groups_second_sweden <- samples_second[match(colnames(dat_Expr_second_sweden),samples_second$SampleID),"modifiedType",drop=TRUE]
+
+dat_Expr_sweden <- dat_Expr_third_heparin%>%
+  cbind(dat_Expr_second_sweden)
+groups_sweden <- c(groups_third_heparin,groups_second_sweden)
+
+l=load("../Data/ReadyData-withoutFilteringProteins/ReadyData-second-italy.RData")
+dat_Expr_italy <- t(olink)
+groups_italy <- samples_second[match(colnames(dat_Expr_italy),samples_second$SampleID),"modifiedType",drop=TRUE]
+
+dat_Expr <- dat_Expr_sweden%>%
+  cbind(dat_Expr_italy)
+groups <- c(groups_sweden,groups_italy)
+```
+
+##### ssGSEA
+
+```{r}
+GSE_results <- ssgsea(dat_Expr,modules,scale = FALSE, minsize = 6)
+GSE_results <- GSE_results["Signature",]
+
+GSE_results <- GSE_results%>%
+  rbind(colnames(dat_Expr))%>%
+  rbind(as.character(groups))%>%
+  t()%>%
+  as.data.frame()
+
+names(GSE_results) <- c("Score","SampleID","Type")
+GSE_results$Score <- as.numeric(GSE_results$Score)
+GSE_results$Type <- factor(GSE_results$Type, levels=c("Active","Latent","Control"))
+
+Fig2_ssGSEA_both_B <- ssGSEA_boxplot_func(GSE_results,"Type","Score","Type")
+
+Fig2_ssGSEA_both_B+
+  stat_compare_means(
+  method = "t.test",
+  comparisons = list(c("Active", "Latent"), c("Latent", "Control"),c("Active", "Control")),
+  label = "p.format",   
+  size = 5,
+  vjust = 0.5
+)
+
+Fig2_ssGSEA_both_B  <- Fig2_ssGSEA_both_B+
+  stat_compare_means(
+  method = "t.test",
+  comparisons = list(c("Active", "Latent"), c("Latent", "Control"),c("Active", "Control")),
+  label = "p.signif",   
+  size = 5,
+  vjust = 0.5
+)+
+  ggtitle("Discovery")
+
+save(Fig2_ssGSEA_both_B,file="../Results/Figures/Fig2_ssGSEA_both_B.RData")
+```
+
+
+#### TB sweden
+
+##### read data
+
+```{r}
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-third-heparin.RData")
+dat_Expr_third_heparin <- t(olink)
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-second-sweden.RData")
+dat_Expr_second_sweden <- t(olink)
+
+groups_third_heparin <- samples_third[match(colnames(dat_Expr_third_heparin),samples_third$SampleID),"modifiedType",drop=TRUE]
+groups_second_sweden <- samples_second[match(colnames(dat_Expr_second_sweden),samples_second$SampleID),"modifiedType",drop=TRUE]
+
+dat_Expr <- dat_Expr_third_heparin%>%
+  cbind(dat_Expr_second_sweden)
+groups <- c(groups_third_heparin,groups_second_sweden)
+```
+
+##### ssGSEA
+
+```{r}
+GSE_results <- ssgsea(dat_Expr,modules,scale = FALSE, minsize = 6)
+GSE_results <- GSE_results["Signature",]
+
+GSE_results <- GSE_results%>%
+  rbind(colnames(dat_Expr))%>%
+  rbind(as.character(groups))%>%
+  t()%>%
+  as.data.frame()
+
+names(GSE_results) <- c("Score","SampleID","Type")
+GSE_results$Score <- as.numeric(GSE_results$Score)
+GSE_results$Type <- factor(GSE_results$Type, levels=c("Active","Latent","Control"))
+
+
+GSE_results_TB_sweden <- GSE_results
+
+Fig2_ssGSEA_sweden_B  <- ssGSEA_boxplot_func(GSE_results_TB_sweden,"Type","Score","Type")
+
+Fig2_ssGSEA_sweden_B+
+  stat_compare_means(
+  method = "t.test",
+  comparisons = list(c("Active", "Latent"), c("Latent", "Control"),c("Active", "Control")),
+  label = "p.format",   
+  size = 5,
+  vjust = 0.5
+)
+
+Fig2_ssGSEA_sweden_B <- Fig2_ssGSEA_sweden_B+
+  stat_compare_means(
+  method = "t.test",
+  comparisons = list(c("Active", "Latent"), c("Latent", "Control"),c("Active", "Control")),
+  label = "p.signif",   
+  size = 5,
+  vjust = 0.5
+)+
+  ggtitle("Sweden")
+
+save(Fig2_ssGSEA_sweden_B,file="../Results/Figures/Fig2_ssGSEA_sweden_B.RData")
+```
+
+#### TB italy
+
+##### read data
+```{r}
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-second-italy.RData")
+dat_Expr <- t(olink)
+groups <- samples_second[match(colnames(dat_Expr),samples_second$SampleID),"modifiedType",drop=TRUE]
+```
+
+##### ssGSEA
+
+```{r}
+GSE_results <- ssgsea(dat_Expr,modules,scale = FALSE, minsize = 6)
+GSE_results <- GSE_results["Signature",]
+
+GSE_results <- GSE_results%>%
+  rbind(colnames(dat_Expr))%>%
+  rbind(as.character(groups))%>%
+  t()%>%
+  as.data.frame()
+
+names(GSE_results) <- c("Score","SampleID","Type")
+GSE_results$Score <- as.numeric(GSE_results$Score)
+GSE_results$Type <- factor(GSE_results$Type, levels=c("Active","Latent","Control"))
+
+GSE_results_TB_italy <- GSE_results
+
+Fig2_ssGSEA_italy_B  <- ssGSEA_boxplot_func(GSE_results_TB_italy,"Type","Score","Type")
+
+Fig2_ssGSEA_italy_B+
+  stat_compare_means(
+  method = "t.test",
+  comparisons = list(c("Active", "Latent"), c("Latent", "Control"),c("Active", "Control")),
+  label = "p.format",   
+  size = 5,
+  vjust = 0.5
+)
+
+Fig2_ssGSEA_italy_B  <- Fig2_ssGSEA_italy_B+
+  stat_compare_means(
+  method = "t.test",
+  comparisons = list(c("Active", "Latent"), c("Latent", "Control"),c("Active", "Control")),
+  label = "p.signif",   
+  size = 5,
+  vjust = 0.5
+)+
+  ggtitle("Italy")
+
+save(Fig2_ssGSEA_italy_B,file="../Results/Figures/Fig2_ssGSEA_italy_B.RData")
+```
+
+
+
+#### nonTB italy
+
+##### read data
+```{r}
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-third-heparin-nonTB.RData")
+dat_Expr_nonTB_italy <- t(olink)
+groups_nonTB_italy <- samples_third[match(colnames(dat_Expr_nonTB_italy),samples_third$SampleID),"modifiedType",drop=TRUE]
+
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-second-italy.RData")
+dat_Expr_TB_italy <- t(olink)
+groups_TB_italy <- samples_second[match(colnames(dat_Expr_TB_italy),samples_second$SampleID),"modifiedType",drop=TRUE]
+
+dat_Expr <- dat_Expr_nonTB_italy%>%
+  cbind(dat_Expr_TB_italy)
+groups <- c(groups_nonTB_italy,groups_TB_italy)
+```
+
+##### ssGSEA
+
+```{r}
+GSE_results <- ssgsea(dat_Expr,modules,scale = FALSE, minsize = 6)
+GSE_results <- GSE_results["Signature",]
+
+GSE_results <- GSE_results%>%
+  rbind(colnames(dat_Expr))%>%
+  rbind(as.character(groups))%>%
+  t()%>%
+  as.data.frame()
+
+names(GSE_results) <- c("Score","SampleID","Type")
+GSE_results$Score <- as.numeric(GSE_results$Score)
+nonTB_groups <- "nonTB"
+
+GSE_results <- GSE_results%>%
+  mutate(modifiedType = case_when(
+    str_detect(Type,"Pneumonia") ~ "nonTB",
+    str_detect(Type,"Excavated pneumonia") ~ "nonTB",
+    str_detect(Type,"MAC") ~ "nonTB",
+    str_detect(Type,"Lung adenocarcinomas") ~ "nonTB",
+    TRUE ~ Type))
+
+
+GSE_results$modifiedType <- factor(GSE_results$modifiedType, levels=c("Active","nonTB","Latent","Control"))
+
+Fig3_ssGSEA_B  <- ggplot(GSE_results,aes(x=modifiedType,y=Score,fill=modifiedType))+
+  geom_boxplot(outlier.shape = NA,alpha=0.6)+
+  geom_jitter(width = 0.1, size = 2, alpha = 1, aes(color=modifiedType)) + 
+  scale_color_manual(values = c("#2F8AC4", "#A3B574","#E48725", "#A5AA99"),labels = c("Active" = "TB Disease","nonTB"="ORD","Latent" = "TB Infection","Control"="IGRA- Contact"))+
+  scale_fill_manual(values = c("#2F8AC4","#A3B574", "#E48725", "#A5AA99"))+
+  labs(y=paste0("Enrichment score"),x=" ",fill=" ",color=" ")+
+  guides(fill = "none")+
+  theme(axis.text.x = element_blank(),  # Increase size of x-axis text
+    axis.text.y = element_text(size = 12),
+    axis.title.y = element_text(size=12),
+    panel.background = element_rect(fill = "white", color = NA),  
+    plot.background = element_rect(fill = "white", color = NA),  
+    panel.grid.major = element_blank(),  
+    panel.grid.minor = element_blank(),
+    panel.border = element_rect(color = "black", fill = NA)
+    )+
+  ylim(-0.5,3.5)
+
+Fig3_ssGSEA_B+
+  stat_compare_means(
+  method = "t.test",
+  comparisons = list(c("Active", "nonTB"), c("nonTB", "Latent"),c("nonTB", "Control")),
+  label = "p.format",   
+  size = 5,
+  vjust = 0.5
+)
+
+Fig3_ssGSEA_B <- Fig3_ssGSEA_B+
+  stat_compare_means(
+  method = "t.test",
+  comparisons = list(c("Active", "nonTB"), c("nonTB", "Latent"),c("nonTB", "Control")),
+  label = "p.signif",   
+  size = 5,
+  vjust = 0.5)+
+  ggtitle("B: 6-Marker signature")
+
+save(Fig3_ssGSEA_B,file="../Results/Figures/Fig3_ssGSEA_B.RData")
+```
+
+
+#### TB-treatment sweden
+
+##### read data
+```{r}
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-third-heparin-followTreatment.RData")
+dat_Expr <- t(olink)
+groups <- samples_third[match(colnames(dat_Expr),samples_third$SampleID),"Treatment",drop=TRUE]
+
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-third-heparin.RData")
+dat_Expr_third_heparin <- t(olink)
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-second-sweden.RData")
+dat_Expr_second_sweden <- t(olink)
+
+groups_third_heparin <- samples_third[match(colnames(dat_Expr_third_heparin),samples_third$SampleID),"modifiedType",drop=TRUE]
+groups_second_sweden <- samples_second[match(colnames(dat_Expr_second_sweden),samples_second$SampleID),"modifiedType",drop=TRUE]
+
+dat_Expr_sweden <- dat_Expr_third_heparin%>%
+  cbind(dat_Expr_second_sweden)
+groups_sweden <- c(groups_third_heparin,groups_second_sweden)
+
+dat_Expr <- dat_Expr%>%
+  cbind(dat_Expr_sweden)
+groups <- c(groups,groups_sweden)
+```
+
+##### ssGSEA
+
+```{r}
+GSE_results <- ssgsea(dat_Expr,modules,scale = TRUE, minsize = 6)
+GSE_results <- GSE_results["Signature",]
+
+GSE_results <- GSE_results%>%
+  rbind(colnames(dat_Expr))%>%
+  rbind(as.character(groups))%>%
+  t()%>%
+  as.data.frame()
+
+names(GSE_results) <- c("Score","SampleID","Type")
+GSE_results <- GSE_results%>%
+  filter(Type!="Active")
+GSE_results$Score <- as.numeric(GSE_results$Score)
+GSE_results$Type <- factor(GSE_results$Type, levels=c("Baseline","2 Months","6 Months","Latent","Control"))
+
+GSE_results <- GSE_results%>%
+  mutate(modifiedType = case_when(
+    str_detect(Type,"Baseline") ~ "Active",
+    str_detect(Type,"2 Months") ~ "Active",
+    str_detect(Type,"6 Months") ~ "Active",
+    TRUE ~ Type))
+
+GSE_results$modifiedType <- factor(GSE_results$modifiedType, levels=c("Active","Latent","Control"))
+
+Fig4_ssGSEA_B  <- ssGSEA_boxplot_func(GSE_results,"Type","Score","modifiedType")
+
+Fig4_ssGSEA_B+
+  stat_compare_means(
+  method = "t.test",
+  comparisons = list(c("Baseline", "2 Months"), c("Baseline", "6 Months"),c("2 Months", "6 Months")),
+  label = "p.format",   
+  size = 5,
+  vjust = 0.5
+)
+
+Fig4_ssGSEA_B <- Fig4_ssGSEA_B+
+  stat_compare_means(
+  method = "t.test",
+  comparisons = list(c("Baseline", "2 Months"), c("Baseline", "6 Months"),c("2 Months", "6 Months")),
+  label = "p.signif",   
+  size = 5,
+  vjust = 0.5)+
+  ggtitle("6-Marker signature")
+
+save(Fig4_ssGSEA_B,file="../Results/Figures/Fig4_ssGSEA_B.RData")
+```
+
+#### TB-treatment sweden (scatterplot with paired samples are connected by lines)
+
+##### read data
+```{r}
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-third-heparin-followTreatment.RData")
+dat_Expr <- t(olink)
+groups <- samples_third[match(colnames(dat_Expr),samples_third$SampleID),"Treatment",drop=TRUE]
+```
+
+##### ssGSEA
+
+```{r}
+GSE_results <- ssgsea(dat_Expr,modules,scale = TRUE, minsize = 6)
+GSE_results <- GSE_results["Signature",]
+
+studyID <- samples_third[match(colnames(dat_Expr),samples_third$SampleID),"Study ID",drop=TRUE]
+studyID <- unlist(lapply(studyID,function(x) strsplit(x,":")[[1]][1]))
+
+GSE_results <- GSE_results%>%
+  rbind(colnames(dat_Expr))%>%
+  rbind(as.character(groups))%>%
+  rbind(as.character(studyID))%>%
+  t()%>%
+  as.data.frame()
+
+names(GSE_results) <- c("Score","SampleID","Type","StudyID")
+GSE_results$Score <- as.numeric(GSE_results$Score)
+GSE_results$Type <- factor(GSE_results$Type, levels=c("Baseline","2 Months","6 Months"))
+
+mean_scores <- GSE_results%>%
+  group_by(Type)%>%
+  summarise(mean_score=mean(Score))
+
+
+Fig4_scatterplot_B <- ggplot(GSE_results,aes(x=Type,y=Score,group = StudyID))+
+  geom_point(aes(color = Type)) +
+  geom_line(colour = "grey") +
+  scale_color_manual(values = c("#2F8AC4","#2F8AC4", "#2F8AC4"))+
+  stat_summary(fun.y=mean, colour="black", geom="line",linetype="dashed",aes(group=1))+
+  labs(y=paste0("Enrichment score"),x=" ",colour=" ")+
+  guides(colour=FALSE)+
+  theme(axis.text.x = element_text(size = 12),  # Increase size of x-axis text
+    axis.text.y = element_text(size = 12),
+    axis.title.y = element_text(size=12),
+    panel.background = element_rect(fill = "white", color = NA),  
+    plot.background = element_rect(fill = "white", color = NA),  
+    panel.grid.major = element_blank(),  
+    panel.grid.minor = element_blank(),
+    panel.border = element_rect(color = "black", fill = NA))
+
+pdf(file="../Results/Figures/Fig4_scatterplot_6 marker.pdf")
+ggplot(GSE_results, aes(x = Type, y = Score, group = StudyID)) +
+  geom_point(aes(color = Type)) +
+  geom_line(colour = "grey") +
+  geom_text(aes(label = SampleID), vjust = 0, size = 3) +  # Add text labels
+  scale_color_manual(values = c("#2F8AC4", "#2F8AC4", "#2F8AC4")) +
+  stat_summary(fun = mean, colour = "black", geom = "line", linetype = "dashed", aes(group = 1)) +
+  labs(y = paste0("Enrichment score"), x = " ", colour = " ") +
+  guides(colour = FALSE) +
+  theme(
+    axis.text.x = element_text(size = 12),
+    axis.text.y = element_text(size = 12),
+    axis.title.y = element_text(size = 12),
+    panel.background = element_rect(fill = "white", color = NA),
+    plot.background = element_rect(fill = "white", color = NA),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_rect(color = "black", fill = NA)
+  )
+dev.off()
+Fig4_scatterplot_B
+save(Fig4_scatterplot_B,file="../Results/Figures/Fig4_scatterplot_B.RData")
+```
+
+
+#### TB-EDTA both
+
+##### read data
+
+```{r}
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-third-edta.RData")
+dat_Expr_EDTA_sweden <- t(olink)
+groups_EDTA_sweden <- samples_third[match(colnames(dat_Expr_EDTA_sweden),samples_third$SampleID),"modifiedType",drop=TRUE]
+
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-portugal.RData")
+dat_Expr_EDTA_portugal <- t(olink)
+groups <- samples_first[match(colnames(dat_Expr_EDTA_portugal),samples_first$SampleID),"modifiedType",drop=TRUE]
+groups_EDTA_portugal <- gsub("Latent","Control",groups)
+
+dat_Expr <- dat_Expr_EDTA_sweden%>%
+  cbind(dat_Expr_EDTA_portugal)
+groups <- c(groups_EDTA_sweden,groups_EDTA_portugal)
+```
+
+##### ssGSEA
+
+```{r}
+GSE_results <- ssgsea(dat_Expr,modules,scale = FALSE, minsize = 6)
+GSE_results <- GSE_results["Signature",]
+
+GSE_results <- GSE_results%>%
+  rbind(colnames(dat_Expr))%>%
+  rbind(as.character(groups))%>%
+  t()%>%
+  as.data.frame()
+
+names(GSE_results) <- c("Score","SampleID","Type")
+GSE_results$Score <- as.numeric(GSE_results$Score)
+GSE_results$Type <- factor(GSE_results$Type, levels=c("Active","Latent","Control"))
+
+
+Fig5_ssGSEA_both_B  <- ssGSEA_boxplot_func(GSE_results,"Type","Score","Type")
+
+Fig5_ssGSEA_both_B+
+  stat_compare_means(
+  method = "t.test",
+  comparisons = list(c("Active", "Latent"), c("Latent", "Control"),c("Active", "Control")),
+  label = "p.format",   
+  size = 5,
+  vjust = 0.5
+)
+
+Fig5_ssGSEA_both_B  <- Fig5_ssGSEA_both_B+
+  stat_compare_means(
+  method = "t.test",
+  comparisons = list(c("Active", "Latent"), c("Latent", "Control"),c("Active", "Control")),
+  label = "p.signif",   
+  size = 5,
+  vjust = 0.5
+)+
+  ggtitle("B: 6-marker signature")
+
+save(Fig5_ssGSEA_both_B,file="../Results/Figures/Fig5_ssGSEA_both_B.RData")
+```
+
+
+#### TB-EDTA sweden
+
+##### read data
+
+```{r}
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-third-edta.RData")
+dat_Expr <- t(olink)
+groups <- samples_third[match(colnames(dat_Expr),samples_third$SampleID),"modifiedType",drop=TRUE]
+```
+
+##### ssGSEA
+
+```{r}
+GSE_results <- ssgsea(dat_Expr,modules,scale = FALSE, minsize = 6)
+GSE_results <- GSE_results["Signature",]
+
+GSE_results <- GSE_results%>%
+  rbind(colnames(dat_Expr))%>%
+  rbind(as.character(groups))%>%
+  t()%>%
+  as.data.frame()
+
+names(GSE_results) <- c("Score","SampleID","Type")
+GSE_results$Score <- as.numeric(GSE_results$Score)
+GSE_results$Type <- factor(GSE_results$Type, levels=c("Active","Latent"))
+
+GSE_results_edta <- GSE_results
+
+Fig5_ssGSEA_sweden_B  <- ssGSEA_boxplot_func(GSE_results_edta,"Type","Score","Type")
+
+Fig5_ssGSEA_sweden_B+
+  stat_compare_means(
+  method = "t.test",
+  comparisons = list(c("Active", "Latent")),
+  label = "p.format",   
+  size = 5,
+  vjust = 0.5
+)
+
+Fig5_ssGSEA_sweden_B  <- Fig5_ssGSEA_sweden_B+
+  stat_compare_means(
+  method = "t.test",
+  comparisons = list(c("Active", "Latent")),
+  label = "p.signif",   
+  size = 5,
+  vjust = 0.5
+)+
+  ggtitle("6-marker signature")
+
+save(Fig5_ssGSEA_sweden_B,file="../Results/Figures/Fig5_ssGSEA_sweden_B.RData")
+```
+
+
+#### TB-EDTA portugal
+
+##### read data
+```{r}
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-portugal.RData")
+dat_Expr <- t(olink)
+groups <- samples_first[match(colnames(dat_Expr),samples_first$SampleID),"modifiedType",drop=TRUE]
+groups <- gsub("Latent","Control",groups)
+```
+
+##### ssGSEA
+
+```{r}
+GSE_results <- ssgsea(dat_Expr,modules,scale = FALSE, minsize = 6)
+GSE_results <- GSE_results["Signature",]
+
+GSE_results <- GSE_results%>%
+  rbind(colnames(dat_Expr))%>%
+  rbind(as.character(groups))%>%
+  t()%>%
+  as.data.frame()
+
+names(GSE_results) <- c("Score","SampleID","Type")
+GSE_results$Score <- as.numeric(GSE_results$Score)
+GSE_results$Type <- factor(GSE_results$Type, levels=c("Active","Latent","Control"))
+
+GSE_results_TB_Portugal <- GSE_results
+
+Fig5_ssGSEA_portugal_B  <- ssGSEA_boxplot_func_portugal(GSE_results_TB_Portugal,"Type","Score","Type")
+
+Fig5_ssGSEA_portugal_B+
+  stat_compare_means(
+  method = "t.test",
+  comparisons = list(c("Active", "Control")),
+  label = "p.format",   
+  size = 5,
+  vjust = 0.5
+)
+
+Fig5_ssGSEA_portugal_B  <- Fig5_ssGSEA_portugal_B+
+  stat_compare_means(
+  method = "t.test",
+  comparisons = list(c("Active", "Control")),
+  label = "p.signif",   
+  size = 5,
+  vjust = 0.5
+)
+
+save(Fig5_ssGSEA_portugal_B,file="../Results/Figures/Fig5_ssGSEA_portugal_B.RData")
+```
+
+
+
+
+### save GSEA results 
+```{r}
+save(GSE_results_TB_sweden, GSE_results_edta,file="../Results/GSEA/6-marker.RData")
+```
+
+## 4-marker
+
+### load signature
+
+```{r}
+load(file="../Data/ReadyData-withoutFilteringProteins/generated for iScience/0.3-pearson-modules.RData")
+modules[[4]]=c("CDCP1","IFN-gamma","CXCL9","VEGFA")
+names(modules)=c("1","2","3","Signature","5")
+```
+
+### which data {.tabset}
+
+#### TB discovery sweden
+
+##### read data
+
+```{r}
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-discovery.RData")
+dat_Expr <- t(olink)
+groups <- samples_first[match(colnames(dat_Expr),samples_first$SampleID),"modifiedType",drop=TRUE]
+```
+
+##### ssGSEA
+
+```{r}
+GSE_results <- ssgsea(dat_Expr,modules,scale = FALSE, minsize = 4)
+GSE_results <- GSE_results["Signature",]
+
+GSE_results <- GSE_results%>%
+  rbind(colnames(dat_Expr))%>%
+  rbind(as.character(groups))%>%
+  t()%>%
+  as.data.frame()
+
+names(GSE_results) <- c("Score","SampleID","Type")
+GSE_results$Score <- as.numeric(GSE_results$Score)
+GSE_results$Type <- factor(GSE_results$Type, levels=c("Active","Latent","Control"))
+
+Fig2_ssGSEA_discovery_F <- ssGSEA_boxplot_func(GSE_results,"Type","Score","Type")
+
+Fig2_ssGSEA_discovery_F+
+  stat_compare_means(
+  method = "t.test",
+  comparisons = list(c("Active", "Latent"), c("Latent", "Control"),c("Active", "Control")),
+  label = "p.format",   
+  size = 5,
+  vjust = 0.5
+)
+
+Fig2_ssGSEA_discovery_F  <- Fig2_ssGSEA_discovery_F+
+  stat_compare_means(
+  method = "t.test",
+  comparisons = list(c("Active", "Latent"), c("Latent", "Control"),c("Active", "Control")),
+  label = "p.signif",   
+  size = 5,
+  vjust = 0.5
+)+
+  ggtitle("Discovery")
+
+save(Fig2_ssGSEA_discovery_F,file="../Results/Figures/Fig2_ssGSEA_discovery_F.RData")
+```
+
+
+#### TB both
+
+##### read data
+
+```{r}
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-third-heparin.RData")
+dat_Expr_third_heparin <- t(olink)
+# dat_Expr_third_heparin <- dat_Expr_third_heparin[,!colnames(dat_Expr_third_heparin)%in%c("TB0166.0","TB0102","TB0161")]
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-second-sweden.RData")
+dat_Expr_second_sweden <- t(olink)
+# dat_Expr_second_sweden <- dat_Expr_second_sweden[,!colnames(dat_Expr_second_sweden)%in%c("TB0061")]
+
+groups_third_heparin <- samples_third[match(colnames(dat_Expr_third_heparin),samples_third$SampleID),"modifiedType",drop=TRUE]
+groups_second_sweden <- samples_second[match(colnames(dat_Expr_second_sweden),samples_second$SampleID),"modifiedType",drop=TRUE]
+
+dat_Expr_sweden <- dat_Expr_third_heparin%>%
+  cbind(dat_Expr_second_sweden)
+groups_sweden <- c(groups_third_heparin,groups_second_sweden)
+
+l=load("../Data/ReadyData-withoutFilteringProteins/ReadyData-second-italy.RData")
+dat_Expr_italy <- t(olink)
+groups_italy <- samples_second[match(colnames(dat_Expr_italy),samples_second$SampleID),"modifiedType",drop=TRUE]
+
+dat_Expr <- dat_Expr_sweden%>%
+  cbind(dat_Expr_italy)
+groups <- c(groups_sweden,groups_italy)
+```
+
+##### ssGSEA
+
+```{r}
+GSE_results <- ssgsea(dat_Expr,modules,scale = FALSE, minsize = 4)
+GSE_results <- GSE_results["Signature",]
+
+GSE_results <- GSE_results%>%
+  rbind(colnames(dat_Expr))%>%
+  rbind(as.character(groups))%>%
+  t()%>%
+  as.data.frame()
+
+names(GSE_results) <- c("Score","SampleID","Type")
+GSE_results$Score <- as.numeric(GSE_results$Score)
+GSE_results$Type <- factor(GSE_results$Type, levels=c("Active","Latent","Control"))
+
+Fig2_ssGSEA_both_F <- ssGSEA_boxplot_func(GSE_results,"Type","Score","Type")
+
+Fig2_ssGSEA_both_F+
+  stat_compare_means(
+  method = "t.test",
+  comparisons = list(c("Active", "Latent"), c("Latent", "Control"),c("Active", "Control")),
+  label = "p.format",   
+  size = 5,
+  vjust = 0.5
+)
+
+Fig2_ssGSEA_both_F  <- Fig2_ssGSEA_both_F+
+  stat_compare_means(
+  method = "t.test",
+  comparisons = list(c("Active", "Latent"), c("Latent", "Control"),c("Active", "Control")),
+  label = "p.signif",   
+  size = 5,
+  vjust = 0.5
+)+
+  ggtitle("Discovery")
+
+save(Fig2_ssGSEA_both_F,file="../Results/Figures/Fig2_ssGSEA_both_F.RData")
+```
+
+
+#### TB sweden
+
+##### read data
+
+```{r}
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-third-heparin.RData")
+dat_Expr_third_heparin <- t(olink)
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-second-sweden.RData")
+dat_Expr_second_sweden <- t(olink)
+
+groups_third_heparin <- samples_third[match(colnames(dat_Expr_third_heparin),samples_third$SampleID),"modifiedType",drop=TRUE]
+groups_second_sweden <- samples_second[match(colnames(dat_Expr_second_sweden),samples_second$SampleID),"modifiedType",drop=TRUE]
+
+dat_Expr <- dat_Expr_third_heparin%>%
+  cbind(dat_Expr_second_sweden)
+groups <- c(groups_third_heparin,groups_second_sweden)
+```
+
+##### ssGSEA
+
+```{r}
+GSE_results <- ssgsea(dat_Expr,modules,scale = FALSE, minsize = 4)
+GSE_results <- GSE_results["Signature",]
+
+GSE_results <- GSE_results%>%
+  rbind(colnames(dat_Expr))%>%
+  rbind(as.character(groups))%>%
+  t()%>%
+  as.data.frame()
+
+names(GSE_results) <- c("Score","SampleID","Type")
+GSE_results$Score <- as.numeric(GSE_results$Score)
+GSE_results$Type <- factor(GSE_results$Type, levels=c("Active","Latent","Control"))
+
+
+GSE_results_TB_sweden <- GSE_results
+
+Fig2_ssGSEA_sweden_F  <- ssGSEA_boxplot_func(GSE_results_TB_sweden,"Type","Score","Type")
+
+Fig2_ssGSEA_sweden_F+
+  stat_compare_means(
+  method = "t.test",
+  comparisons = list(c("Active", "Latent"), c("Latent", "Control"),c("Active", "Control")),
+  label = "p.format",   
+  size = 5,
+  vjust = 0.5
+)
+
+Fig2_ssGSEA_sweden_F <- Fig2_ssGSEA_sweden_F+
+  stat_compare_means(
+  method = "t.test",
+  comparisons = list(c("Active", "Latent"), c("Latent", "Control"),c("Active", "Control")),
+  label = "p.signif",   
+  size = 5,
+  vjust = 0.5
+)+
+  ggtitle("Sweden")
+
+save(Fig2_ssGSEA_sweden_F,file="../Results/Figures/Fig2_ssGSEA_sweden_F.RData")
+```
+
+#### TB italy
+
+##### read data
+```{r}
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-second-italy.RData")
+dat_Expr <- t(olink)
+groups <- samples_second[match(colnames(dat_Expr),samples_second$SampleID),"modifiedType",drop=TRUE]
+```
+
+##### ssGSEA
+
+```{r}
+GSE_results <- ssgsea(dat_Expr,modules,scale = FALSE, minsize = 4)
+GSE_results <- GSE_results["Signature",]
+
+GSE_results <- GSE_results%>%
+  rbind(colnames(dat_Expr))%>%
+  rbind(as.character(groups))%>%
+  t()%>%
+  as.data.frame()
+
+names(GSE_results) <- c("Score","SampleID","Type")
+GSE_results$Score <- as.numeric(GSE_results$Score)
+GSE_results$Type <- factor(GSE_results$Type, levels=c("Active","Latent","Control"))
+
+GSE_results_TB_italy <- GSE_results
+
+Fig2_ssGSEA_italy_F  <- ssGSEA_boxplot_func(GSE_results_TB_italy,"Type","Score","Type")
+
+Fig2_ssGSEA_italy_F+
+  stat_compare_means(
+  method = "t.test",
+  comparisons = list(c("Active", "Latent"), c("Latent", "Control"),c("Active", "Control")),
+  label = "p.format",   
+  size = 5,
+  vjust = 0.5
+)
+
+Fig2_ssGSEA_italy_F  <- Fig2_ssGSEA_italy_F+
+  stat_compare_means(
+  method = "t.test",
+  comparisons = list(c("Active", "Latent"), c("Latent", "Control"),c("Active", "Control")),
+  label = "p.signif",   
+  size = 5,
+  vjust = 0.5
+)+
+  ggtitle("Italy")
+
+save(Fig2_ssGSEA_italy_F,file="../Results/Figures/Fig2_ssGSEA_italy_F.RData")
+```
+
+
+
+
+
+#### nonTB italy
+
+##### read data
+```{r}
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-third-heparin-nonTB.RData")
+dat_Expr_nonTB_italy <- t(olink)
+groups_nonTB_italy <- samples_third[match(colnames(dat_Expr_nonTB_italy),samples_third$SampleID),"modifiedType",drop=TRUE]
+
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-second-italy.RData")
+dat_Expr_TB_italy <- t(olink)
+groups_TB_italy <- samples_second[match(colnames(dat_Expr_TB_italy),samples_second$SampleID),"modifiedType",drop=TRUE]
+
+dat_Expr <- dat_Expr_nonTB_italy%>%
+  cbind(dat_Expr_TB_italy)
+groups <- c(groups_nonTB_italy,groups_TB_italy)
+```
+
+##### ssGSEA
+
+```{r}
+GSE_results <- ssgsea(dat_Expr,modules,scale = FALSE, minsize = 4)
+GSE_results <- GSE_results["Signature",]
+
+GSE_results <- GSE_results%>%
+  rbind(colnames(dat_Expr))%>%
+  rbind(as.character(groups))%>%
+  t()%>%
+  as.data.frame()
+
+names(GSE_results) <- c("Score","SampleID","Type")
+GSE_results$Score <- as.numeric(GSE_results$Score)
+nonTB_groups <- "nonTB"
+
+GSE_results <- GSE_results%>%
+  mutate(modifiedType = case_when(
+    str_detect(Type,"Pneumonia") ~ "nonTB",
+    str_detect(Type,"Excavated pneumonia") ~ "nonTB",
+    str_detect(Type,"MAC") ~ "nonTB",
+    str_detect(Type,"Lung adenocarcinomas") ~ "nonTB",
+    TRUE ~ Type))
+
+
+GSE_results$modifiedType <- factor(GSE_results$modifiedType, levels=c("Active","nonTB","Latent","Control"))
+
+Fig3_ssGSEA_F<- ggplot(GSE_results,aes(x=modifiedType,y=Score,fill=modifiedType))+
+  geom_boxplot(outlier.shape = NA,alpha=0.6)+
+  geom_jitter(width = 0.1, size = 2, alpha = 1, aes(color=modifiedType)) + 
+  scale_color_manual(values = c("#2F8AC4", "#A3B574","#E48725", "#A5AA99"),labels = c("Active" = "TB Disease","nonTB"="ORD","Latent" = "TB Infection","Control"="IGRA- Contact"))+
+  scale_fill_manual(values = c("#2F8AC4","#A3B574", "#E48725", "#A5AA99"))+
+  labs(y=paste0("Enrichment score"),x=" ",fill=" ",color=" ")+
+  guides(fill = "none")+
+  theme(axis.text.x = element_blank(),  # Increase size of x-axis text
+    axis.text.y = element_text(size = 12),
+    axis.title.y = element_text(size=12),
+    panel.background = element_rect(fill = "white", color = NA),  
+    plot.background = element_rect(fill = "white", color = NA),  
+    panel.grid.major = element_blank(),  
+    panel.grid.minor = element_blank(),
+    panel.border = element_rect(color = "black", fill = NA)
+    )+
+  ylim(-0.5,3.5)
+
+Fig3_ssGSEA_F+
+  stat_compare_means(
+  method = "t.test",
+  comparisons = list(c("Active", "nonTB"), c("nonTB", "Latent"),c("nonTB", "Control")),
+  label = "p.format",   
+  size = 5,
+  vjust = 0.5
+)
+
+Fig3_ssGSEA_F<- Fig3_ssGSEA_F+
+  stat_compare_means(
+  method = "t.test",
+  comparisons = list(c("Active", "nonTB"), c("nonTB", "Latent"),c("nonTB", "Control")),
+  label = "p.signif",   
+  size = 5,
+  vjust = 0.5)+
+  ggtitle("C: 4-Marker signature")
+
+save(Fig3_ssGSEA_F,file="../Results/Figures/Fig3_ssGSEA_F.RData")
+```
+
+
+#### TB-treatment sweden
+
+##### read data
+```{r}
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-third-heparin-followTreatment.RData")
+dat_Expr <- t(olink)
+groups <- samples_third[match(colnames(dat_Expr),samples_third$SampleID),"Treatment",drop=TRUE]
+
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-third-heparin.RData")
+dat_Expr_third_heparin <- t(olink)
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-second-sweden.RData")
+dat_Expr_second_sweden <- t(olink)
+
+groups_third_heparin <- samples_third[match(colnames(dat_Expr_third_heparin),samples_third$SampleID),"modifiedType",drop=TRUE]
+groups_second_sweden <- samples_second[match(colnames(dat_Expr_second_sweden),samples_second$SampleID),"modifiedType",drop=TRUE]
+
+dat_Expr_sweden <- dat_Expr_third_heparin%>%
+  cbind(dat_Expr_second_sweden)
+groups_sweden <- c(groups_third_heparin,groups_second_sweden)
+
+dat_Expr <- dat_Expr%>%
+  cbind(dat_Expr_sweden)
+groups <- c(groups,groups_sweden)
+```
+
+##### ssGSEA
+
+```{r}
+GSE_results <- ssgsea(dat_Expr,modules,scale = TRUE, minsize = 4)
+GSE_results <- GSE_results["Signature",]
+
+GSE_results <- GSE_results%>%
+  rbind(colnames(dat_Expr))%>%
+  rbind(as.character(groups))%>%
+  t()%>%
+  as.data.frame()
+
+names(GSE_results) <- c("Score","SampleID","Type")
+GSE_results <- GSE_results%>%
+  filter(Type!="Active")
+GSE_results$Score <- as.numeric(GSE_results$Score)
+GSE_results$Type <- factor(GSE_results$Type, levels=c("Baseline","2 Months","6 Months","Latent","Control"))
+
+GSE_results <- GSE_results%>%
+  mutate(modifiedType = case_when(
+    str_detect(Type,"Baseline") ~ "Active",
+    str_detect(Type,"2 Months") ~ "Active",
+    str_detect(Type,"6 Months") ~ "Active",
+    TRUE ~ Type))
+
+GSE_results$modifiedType <- factor(GSE_results$modifiedType, levels=c("Active","Latent","Control"))
+
+Fig4_ssGSEA_F <- ssGSEA_boxplot_func(GSE_results,"Type","Score","modifiedType")
+
+Fig4_ssGSEA_F+
+  stat_compare_means(
+  method = "t.test",
+  comparisons = list(c("Baseline", "2 Months"), c("Baseline", "6 Months"),c("2 Months", "6 Months")),
+  label = "p.format",   
+  size = 5,
+  vjust = 0.5
+)
+
+Fig4_ssGSEA_F<- Fig4_ssGSEA_F+
+  stat_compare_means(
+  method = "t.test",
+  comparisons = list(c("Baseline", "2 Months"), c("Baseline", "6 Months"),c("2 Months", "6 Months")),
+  label = "p.signif",   
+  size = 5,
+  vjust = 0.5)+
+  ggtitle("4-Marker signature")
+
+save(Fig4_ssGSEA_F,file="../Results/Figures/Fig4_ssGSEA_F.RData")
+```
+
+#### TB-treatment sweden (scatterplot with paired samples are connected by lines)
+
+##### read data
+```{r}
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-third-heparin-followTreatment.RData")
+dat_Expr <- t(olink)
+groups <- samples_third[match(colnames(dat_Expr),samples_third$SampleID),"Treatment",drop=TRUE]
+```
+
+##### ssGSEA
+
+```{r}
+GSE_results <- ssgsea(dat_Expr,modules,scale = TRUE, minsize = 4)
+GSE_results <- GSE_results["Signature",]
+
+studyID <- samples_third[match(colnames(dat_Expr),samples_third$SampleID),"Study ID",drop=TRUE]
+studyID <- unlist(lapply(studyID,function(x) strsplit(x,":")[[1]][1]))
+
+GSE_results <- GSE_results%>%
+  rbind(colnames(dat_Expr))%>%
+  rbind(as.character(groups))%>%
+  rbind(as.character(studyID))%>%
+  t()%>%
+  as.data.frame()
+
+names(GSE_results) <- c("Score","SampleID","Type","StudyID")
+GSE_results$Score <- as.numeric(GSE_results$Score)
+GSE_results$Type <- factor(GSE_results$Type, levels=c("Baseline","2 Months","6 Months"))
+
+mean_scores <- GSE_results%>%
+  group_by(Type)%>%
+  summarise(mean_score=mean(Score))
+
+
+Fig4_scatterplot_F<- ggplot(GSE_results,aes(x=Type,y=Score,group = StudyID))+
+  geom_point(aes(color = Type)) +
+  geom_line(colour = "grey") +
+  scale_color_manual(values = c("#2F8AC4","#2F8AC4", "#2F8AC4"))+
+  stat_summary(fun.y=mean, colour="black", geom="line",linetype="dashed",aes(group=1))+
+  labs(y=paste0("Enrichment score"),x=" ",colour=" ")+
+  guides(colour=FALSE)+
+  theme(axis.text.x = element_text(size = 12),  # Increase size of x-axis text
+    axis.text.y = element_text(size = 12),
+    axis.title.y = element_text(size=12),
+    panel.background = element_rect(fill = "white", color = NA),  
+    plot.background = element_rect(fill = "white", color = NA),  
+    panel.grid.major = element_blank(),  
+    panel.grid.minor = element_blank(),
+    panel.border = element_rect(color = "black", fill = NA))
+
+Fig4_scatterplot_F
+save(Fig4_scatterplot_F,file="../Results/Figures/Fig4_scatterplot_F.RData")
+```
+
+
+
+
+#### TB-EDTA both
+
+##### read data
+
+```{r}
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-third-edta.RData")
+dat_Expr_EDTA_sweden <- t(olink)
+groups_EDTA_sweden <- samples_third[match(colnames(dat_Expr_EDTA_sweden),samples_third$SampleID),"modifiedType",drop=TRUE]
+
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-portugal.RData")
+dat_Expr_EDTA_portugal <- t(olink)
+groups <- samples_first[match(colnames(dat_Expr_EDTA_portugal),samples_first$SampleID),"modifiedType",drop=TRUE]
+groups_EDTA_portugal <- gsub("Latent","Control",groups)
+
+dat_Expr <- dat_Expr_EDTA_sweden%>%
+  cbind(dat_Expr_EDTA_portugal)
+groups <- c(groups_EDTA_sweden,groups_EDTA_portugal)
+```
+
+##### ssGSEA
+
+```{r}
+GSE_results <- ssgsea(dat_Expr,modules,scale = FALSE, minsize = 4)
+GSE_results <- GSE_results["Signature",]
+
+GSE_results <- GSE_results%>%
+  rbind(colnames(dat_Expr))%>%
+  rbind(as.character(groups))%>%
+  t()%>%
+  as.data.frame()
+
+names(GSE_results) <- c("Score","SampleID","Type")
+GSE_results$Score <- as.numeric(GSE_results$Score)
+GSE_results$Type <- factor(GSE_results$Type, levels=c("Active","Latent","Control"))
+
+
+Fig5_ssGSEA_both_F  <- ssGSEA_boxplot_func(GSE_results,"Type","Score","Type")
+
+Fig5_ssGSEA_both_F+
+  stat_compare_means(
+  method = "t.test",
+  comparisons = list(c("Active", "Latent"), c("Latent", "Control"),c("Active", "Control")),
+  label = "p.format",   
+  size = 5,
+  vjust = 0.5
+)
+
+Fig5_ssGSEA_both_F  <- Fig5_ssGSEA_both_F+
+  stat_compare_means(
+  method = "t.test",
+  comparisons = list(c("Active", "Latent"), c("Latent", "Control"),c("Active", "Control")),
+  label = "p.signif",   
+  size = 5,
+  vjust = 0.5
+)+
+  ggtitle("C: 4-marker signature")
+
+save(Fig5_ssGSEA_both_F,file="../Results/Figures/Fig5_ssGSEA_both_F.RData")
+```
+
+
+#### TB-EDTA sweden
+
+##### read data
+
+```{r}
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-third-edta.RData")
+dat_Expr <- t(olink)
+groups <- samples_third[match(colnames(dat_Expr),samples_third$SampleID),"modifiedType",drop=TRUE]
+# TB0091
+groups[6] <- "Latent"
+```
+
+##### ssGSEA
+
+```{r}
+GSE_results <- ssgsea(dat_Expr,modules,scale = FALSE, minsize = 4)
+GSE_results <- GSE_results["Signature",]
+
+GSE_results <- GSE_results%>%
+  rbind(colnames(dat_Expr))%>%
+  rbind(as.character(groups))%>%
+  t()%>%
+  as.data.frame()
+
+names(GSE_results) <- c("Score","SampleID","Type")
+GSE_results$Score <- as.numeric(GSE_results$Score)
+GSE_results$Type <- factor(GSE_results$Type, levels=c("Active","Latent"))
+
+GSE_results_edta <- GSE_results
+
+Fig5_ssGSEA_sweden_F  <- ssGSEA_boxplot_func(GSE_results_edta,"Type","Score","Type")
+
+Fig5_ssGSEA_sweden_F+
+  stat_compare_means(
+  method = "t.test",
+  comparisons = list(c("Active", "Latent")),
+  label = "p.format",   
+  size = 5,
+  vjust = 0.5
+)
+
+Fig5_ssGSEA_sweden_F  <- Fig5_ssGSEA_sweden_F+
+  stat_compare_means(
+  method = "t.test",
+  comparisons = list(c("Active", "Latent")),
+  label = "p.signif",   
+  size = 5,
+  vjust = 0.5
+)+
+  ggtitle("4-marker signature")
+
+save(Fig5_ssGSEA_sweden_F,file="../Results/Figures/Fig5_ssGSEA_sweden_F.RData")
+```
+
+#### TB-EDTA portugal
+
+##### read data
+```{r}
+load("../Data/ReadyData-withoutFilteringProteins/ReadyData-portugal.RData")
+dat_Expr <- t(olink)
+groups <- samples_first[match(colnames(dat_Expr),samples_first$SampleID),"modifiedType",drop=TRUE]
+groups <- gsub("Latent","Control",groups)
+```
+
+##### ssGSEA
+
+```{r}
+GSE_results <- ssgsea(dat_Expr,modules,scale = FALSE, minsize = 4)
+GSE_results <- GSE_results["Signature",]
+
+GSE_results <- GSE_results%>%
+  rbind(colnames(dat_Expr))%>%
+  rbind(as.character(groups))%>%
+  t()%>%
+  as.data.frame()
+
+names(GSE_results) <- c("Score","SampleID","Type")
+GSE_results$Score <- as.numeric(GSE_results$Score)
+GSE_results$Type <- factor(GSE_results$Type, levels=c("Active","Latent","Control"))
+
+GSE_results_TB_Portugal <- GSE_results
+
+Fig5_ssGSEA_portugal_F  <- ssGSEA_boxplot_func_portugal(GSE_results_TB_Portugal,"Type","Score","Type")
+
+Fig5_ssGSEA_portugal_F+
+  stat_compare_means(
+  method = "t.test",
+  comparisons = list(c("Active", "Control")),
+  label = "p.format",   
+  size = 5,
+  vjust = 0.5
+)
+
+Fig5_ssGSEA_portugal_F <- Fig5_ssGSEA_portugal_F+
+  stat_compare_means(
+  method = "t.test",
+  comparisons = list(c("Active", "Control")),
+  label = "p.signif",   
+  size = 5,
+  vjust = 0.5
+)
+
+save(Fig5_ssGSEA_portugal_F,file="../Results/Figures/Fig5_ssGSEA_portugal_F.RData")
+```
+
+
+
+
+### save GSEA results 
+```{r}
+save(GSE_results_TB_sweden, GSE_results_edta,file="../Results/GSEA/4-marker-2.RData")
+```
+
